@@ -48,6 +48,7 @@
 #include <misc/ipv4_proto.h>
 #include <misc/ipv6_proto.h>
 #include <misc/udp_proto.h>
+#include <misc/dns_proto.h>
 #include <misc/byteorder.h>
 #include <misc/balloc.h>
 #include <misc/open_standard_streams.h>
@@ -68,6 +69,8 @@
 #include <lwip/netif.h>
 #include <lwip/tcp.h>
 #include <tun2socks/SocksUdpGwClient.h>
+#include <sys/socket.h>
+#include <stringmap/BStringMap.h>
 
 #ifndef BADVPN_USE_WINAPI
 #include <base/BLog_syslog.h>
@@ -117,13 +120,16 @@ struct {
     char *udpgw_remote_server_addr;
     int udpgw_max_connections;
     int udpgw_connection_buffer_size;
-    int udpgw_transparent_dns;
+    int transparent_dns;
 
     // ==== PSIPHON ====
     int tun_fd;
     int tun_mtu;
     int set_signal;
     // ==== PSIPHON ====
+    // ==== UPROXY ====
+    char *dns_server_address;
+    // ==== UPROXY ====
 } options;
 
 // TCP client
@@ -219,6 +225,11 @@ static void run (void);
 static void init_arguments (const char* program_name);
 // ==== PSIPHON ====
 
+//==== UPROXY ====
+BAddr dns_server_address;  // IP address of local DNS resolver
+//==== UPROXY ====
+
+
 static void terminate (void);
 static void print_help (const char *name);
 static void print_version (void);
@@ -226,7 +237,7 @@ static int parse_arguments (int argc, char *argv[]);
 static int process_arguments (void);
 static void signal_handler (void *unused);
 static BAddr baddr_from_lwip (int is_ipv6, const ipX_addr_t *ipx_addr, uint16_t port_hostorder);
-static void lwip_init_job_hadler (void *unused);
+static void lwip_init_job_handler (void *unused);
 static void tcp_timer_handler (void *unused);
 static void device_error_handler (void *unused);
 static void device_read_handler_send (void *unused, uint8_t *data, int data_len);
@@ -254,8 +265,142 @@ static void client_socks_recv_initiate (struct tcp_client *client);
 static void client_socks_recv_handler_done (struct tcp_client *client, int data_len);
 static int client_socks_recv_send_out (struct tcp_client *client);
 static err_t client_sent_func (void *arg, struct tcp_pcb *tpcb, u16_t len);
-static void udpgw_client_handler_received (void *unused, BAddr local_addr, BAddr remote_addr, const uint8_t *data, int data_len);
+static void udp_send_packet_to_device (void *unused, BAddr local_addr, BAddr remote_addr, const uint8_t *data, int data_len);
 
+//==== UPROXY ====
+
+typedef struct {
+    int sockfd;
+    uint8_t *udp_recv_buffer;
+    BAddr netif_addr;
+    BFileDescriptor bfd;
+    BStringMap map;
+} UdpPcb;
+
+UdpPcb udp_pcb;
+
+static int udp_init(UdpPcb* udp_pcb, int remote_port);
+static int udp_send(int sockfd, uint8_t* data, int data_len);
+static int udp_recv(int sockfd, uint8_t* buffer, int buffer_len);
+static void udp_fd_handler(UdpPcb* udp_pcb, int event);
+static void udp_free(UdpPcb* udp_pcb);
+
+// File descriptor handler for UDP socket.
+static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
+    int recv_bytes = udp_recv(udp_pcb->sockfd, udp_pcb->udp_recv_buffer,
+                              UDP_MAX_DATAGRAM_BYTES);
+    if (recv_bytes <= 0) {
+        BLog(BLOG_ERROR, "udp_fd_handler: udp_recv failed, err %d", recv_bytes);
+        return;
+    }
+
+    char dns_id_str[DNS_ID_STRLEN];
+    dns_get_header_id_str(dns_id_str, udp_pcb->udp_recv_buffer);
+    const char* local_addr_str = BStringMap_Get(&udp_pcb->map, dns_id_str);
+    if (!local_addr_str) {
+        BLog(BLOG_ERROR, "udp_fd_handler: no address for dns reqeust id %s",
+             dns_id_str);
+        return;
+    }
+
+    BAddr local_addr;
+    if (!BAddr_Parse(&local_addr, (char *)local_addr_str, NULL, 0)) {
+        BLog(BLOG_ERROR, "udp_fd_handler: failed to parse address %s",
+             local_addr_str);
+        BStringMap_Unset(&udp_pcb->map, dns_id_str);
+        return;
+    }
+    // Remove entry from map
+    BStringMap_Unset(&udp_pcb->map, dns_id_str);
+
+    // Send data to device
+    udp_send_packet_to_device(
+        NULL, local_addr, udp_pcb->netif_addr,
+        udp_pcb->udp_recv_buffer, recv_bytes);
+}
+
+// Initializes a UDP socket, binds it locally and connects it to a local
+// address on |remote_port|.
+static int udp_init(UdpPcb* udp_pcb, int remote_port) {
+    // Init receive buffer
+    udp_pcb->udp_recv_buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
+    if (!udp_pcb->udp_recv_buffer) {
+        BLog(BLOG_ERROR, "udp_init: failed to init recv buffer");
+        return 0;
+    }
+
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0 ) {
+        BLog(BLOG_ERROR, "udp_init: failed to create socket");
+        return 0;
+    }
+    // Bind to any local address in order to receive data
+    struct sockaddr_in local_addr;
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    local_addr.sin_port = htons(0);
+    if (bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
+        BLog(BLOG_ERROR, "udp_init: failed to bind socket");
+        close(sockfd);
+        return 0;
+    }
+
+    // Connect to UDP server on specified address
+    struct sockaddr_in remote_addr;
+    memset(&remote_addr, 0, sizeof(remote_addr));
+    remote_addr.sin_family = AF_INET;
+    // BAddr is already in network order, use htonl/htons for ip/port otherwise
+    remote_addr.sin_addr.s_addr = dns_server_address.ipv4.ip;
+    remote_addr.sin_port = dns_server_address.ipv4.port;
+    if (connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) < 0) {
+        BLog(BLOG_ERROR, "udp_init: failed to connect to remote");
+        close(sockfd);
+        return 0;
+    }
+    // Monitor socket for read
+    BFileDescriptor_Init(&udp_pcb->bfd, sockfd, (BFileDescriptor_handler)udp_fd_handler, udp_pcb);
+    if (!BReactor_AddFileDescriptor(&ss, &udp_pcb->bfd)) {
+        BLog(BLOG_ERROR, "udp_init: failed to add fd to event loop");
+        close(sockfd);
+        return 0;
+    }
+    BReactor_SetFileDescriptorEvents(&ss, &udp_pcb->bfd, BREACTOR_READ);
+
+    udp_pcb->sockfd = sockfd;
+    udp_pcb->netif_addr =
+        BAddr_MakeFromIpaddrAndPort(netif_ipaddr, hton16(UDP_DNS_PORT));
+    BStringMap_Init(&udp_pcb->map);
+
+    return sockfd;
+}
+
+// Sends |data| through |sockfd|, a connected udp socket.
+static int udp_send(int sockfd, uint8_t* data, int data_len) {
+    int sent_bytes = send(sockfd, (void *)data, (size_t)data_len, 0);
+    if (sent_bytes < 0) {
+        BLog(BLOG_ERROR, "udp_send: failed to send data");
+        return 0;
+    }
+    return sent_bytes;
+}
+
+static int udp_recv(int sockfd, uint8_t* buffer, int buffer_len) {
+    int recv_bytes = recv(sockfd, buffer, buffer_len, 0);
+    BLog(BLOG_INFO, "udp_recv: received %d bytes", recv_bytes);
+    return recv_bytes;
+}
+
+static void udp_free(UdpPcb* udp_pcb) {
+    if (udp_pcb->udp_recv_buffer)
+        free(udp_pcb->udp_recv_buffer);
+    if (udp_pcb->sockfd)
+        close(udp_pcb->sockfd);
+
+    BStringMap_Free(&udp_pcb->map);
+}
+
+//==== UPROXY =====
 
 //==== PSIPHON ====
 
@@ -276,7 +421,7 @@ void PsiphonLog(const char *levelStr, const char *channelStr, const char *msgStr
     jstring channel = (*g_env)->NewStringUTF(g_env, channelStr);
     jstring msg = (*g_env)->NewStringUTF(g_env, msgStr);
 
-    jclass cls = (*g_env)->FindClass(g_env, "ca/psiphon/PsiphonTunnel");
+    jclass cls = (*g_env)->FindClass(g_env, "org/uproxy/tun2socks/Tun2SocksJni");
     jmethodID logMethod = (*g_env)->GetStaticMethodID(g_env, cls, "logTun2Socks", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
     (*g_env)->CallStaticVoidMethod(g_env, cls, logMethod, level, channel, msg);
 
@@ -287,7 +432,14 @@ void PsiphonLog(const char *levelStr, const char *channelStr, const char *msgStr
     (*g_env)->DeleteLocalRef(g_env, msg);
 }
 
-JNIEXPORT jint JNICALL Java_ca_psiphon_PsiphonTunnel_runTun2Socks(
+// TODO(alalama): remove this method, for debug only.
+JNIEXPORT jstring JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_testTun2Socks(
+    JNIEnv* env,
+    jclass cls) {
+    return (*env)->NewStringUTF(env, "tun2socks loaded!");
+ }
+
+JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     JNIEnv* env,
     jclass cls,
     jint vpnInterfaceFileDescriptor,
@@ -295,27 +447,27 @@ JNIEXPORT jint JNICALL Java_ca_psiphon_PsiphonTunnel_runTun2Socks(
     jstring vpnIpAddress,
     jstring vpnNetMask,
     jstring socksServerAddress,
-    jstring udpgwServerAddress,
-    jint udpgwTransparentDNS)
+    jstring dnsServerAddress,
+    jint transparentDNS)
 {
     g_env = env;
 
     const char* vpnIpAddressStr = (*env)->GetStringUTFChars(env, vpnIpAddress, 0);
     const char* vpnNetMaskStr = (*env)->GetStringUTFChars(env, vpnNetMask, 0);
     const char* socksServerAddressStr = (*env)->GetStringUTFChars(env, socksServerAddress, 0);
-    const char* udpgwServerAddressStr = (*env)->GetStringUTFChars(env, udpgwServerAddress, 0);
+    const char* dnsServerAddressStr = (*env)->GetStringUTFChars(env, dnsServerAddress, 0);
 
-    init_arguments("Psiphon tun2socks");
+    init_arguments("uProxy tun2socks");
 
     options.netif_ipaddr = (char*)vpnIpAddressStr;
     options.netif_netmask = (char*)vpnNetMaskStr;
     options.socks_server_addr = (char*)socksServerAddressStr;
-    options.udpgw_remote_server_addr = (char*)udpgwServerAddressStr;
-    options.udpgw_transparent_dns = udpgwTransparentDNS;
+    options.dns_server_address = (char*)dnsServerAddressStr;
+    options.transparent_dns = transparentDNS;
     options.tun_fd = vpnInterfaceFileDescriptor;
     options.tun_mtu = vpnInterfaceMTU;
     options.set_signal = 0;
-    options.loglevel = 2;
+    options.loglevel = 4;  // TODO(alalama): lower for release.
 
     BLog_InitPsiphon();
 
@@ -326,7 +478,7 @@ JNIEXPORT jint JNICALL Java_ca_psiphon_PsiphonTunnel_runTun2Socks(
     (*env)->ReleaseStringUTFChars(env, vpnIpAddress, vpnIpAddressStr);
     (*env)->ReleaseStringUTFChars(env, vpnNetMask, vpnNetMaskStr);
     (*env)->ReleaseStringUTFChars(env, socksServerAddress, socksServerAddressStr);
-    (*env)->ReleaseStringUTFChars(env, udpgwServerAddress, udpgwServerAddressStr);
+    (*env)->ReleaseStringUTFChars(env, dnsServerAddress, dnsServerAddressStr);
 
     g_env = 0;
 
@@ -335,7 +487,7 @@ JNIEXPORT jint JNICALL Java_ca_psiphon_PsiphonTunnel_runTun2Socks(
     return 1;
 }
 
-JNIEXPORT jint JNICALL Java_ca_psiphon_PsiphonTunnel_terminateTun2Socks(
+JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_terminateTun2Socks(
     jclass cls,
     JNIEnv* env)
 {
@@ -490,18 +642,19 @@ void run()
         goto fail4;
     }
 
+    // uProxy: always calculate udp_mtu
+    // compute maximum UDP payload size we need to pass through udpgw
+    udp_mtu = BTap_GetMTU(&device) - (int)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
+    if (options.netif_ip6addr) {
+        int udp_ip6_mtu = BTap_GetMTU(&device) - (int)(sizeof(struct ipv6_header) + sizeof(struct udp_header));
+        if (udp_mtu < udp_ip6_mtu) {
+            udp_mtu = udp_ip6_mtu;
+        }
+    }
+    if (udp_mtu < 0) {
+        udp_mtu = 0;
+    }
     if (options.udpgw_remote_server_addr) {
-        // compute maximum UDP payload size we need to pass through udpgw
-        udp_mtu = BTap_GetMTU(&device) - (int)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
-        if (options.netif_ip6addr) {
-            int udp_ip6_mtu = BTap_GetMTU(&device) - (int)(sizeof(struct ipv6_header) + sizeof(struct udp_header));
-            if (udp_mtu < udp_ip6_mtu) {
-                udp_mtu = udp_ip6_mtu;
-            }
-        }
-        if (udp_mtu < 0) {
-            udp_mtu = 0;
-        }
 
         // make sure our UDP payloads aren't too large for udpgw
         int udpgw_mtu = udpgw_compute_mtu(udp_mtu);
@@ -513,7 +666,7 @@ void run()
         // init udpgw client
         if (!SocksUdpGwClient_Init(&udpgw_client, udp_mtu, DEFAULT_UDPGW_MAX_CONNECTIONS, options.udpgw_connection_buffer_size, UDPGW_KEEPALIVE_TIME,
                                    socks_server_addr, socks_auth_info, socks_num_auth_info,
-                                   udpgw_remote_server_addr, UDPGW_RECONNECT_TIME, &ss, NULL, udpgw_client_handler_received
+                                   udpgw_remote_server_addr, UDPGW_RECONNECT_TIME, &ss, NULL, udp_send_packet_to_device
         )) {
             BLog(BLOG_ERROR, "SocksUdpGwClient_Init failed");
             goto fail4a;
@@ -521,7 +674,7 @@ void run()
     }
 
     // init lwip init job
-    BPending_Init(&lwip_init_job, BReactor_PendingGroup(&ss), lwip_init_job_hadler, NULL);
+    BPending_Init(&lwip_init_job, BReactor_PendingGroup(&ss), lwip_init_job_handler, NULL);
     BPending_Set(&lwip_init_job);
 
     // init device write buffer
@@ -547,6 +700,13 @@ void run()
 
     // init number of clients
     num_clients = 0;
+
+    // ==== UPROXY ====
+    // TODO(alalama): make this port an argument
+    if (!udp_init(&udp_pcb, 5300)) {
+        goto fail5;
+    }
+    // ==== UPROXY ====
 
     // enter event loop
     BLog(BLOG_NOTICE, "entering event loop");
@@ -589,6 +749,9 @@ void run()
     tcp_remove(tcp_tw_pcbs);
     // ==== PSIPHON ====
 
+    // ==== UPROXY ====
+    udp_free(&udp_pcb);
+    // ==== UPROXY ====
 
     BReactor_RemoveTimer(&ss, &tcp_timer);
     BFree(device_write_buf);
@@ -693,7 +856,8 @@ void init_arguments (const char* program_name)
     options.udpgw_remote_server_addr = NULL;
     options.udpgw_max_connections = DEFAULT_UDPGW_MAX_CONNECTIONS;
     options.udpgw_connection_buffer_size = DEFAULT_UDPGW_CONNECTION_BUFFER_SIZE;
-    options.udpgw_transparent_dns = 0;
+    options.transparent_dns = 0;
+    options.dns_server_address = NULL;
 
     options.tun_fd = 0;
     options.set_signal = 1;
@@ -883,8 +1047,8 @@ int parse_arguments (int argc, char *argv[])
             }
             i++;
         }
-        else if (!strcmp(arg, "--udpgw-transparent-dns")) {
-            options.udpgw_transparent_dns = 1;
+        else if (!strcmp(arg, "--transparent-dns")) {
+            options.transparent_dns = 1;
         }
         else {
             fprintf(stderr, "unknown option: %s\n", arg);
@@ -996,6 +1160,13 @@ int process_arguments (void)
             return 0;
         }
     }
+    // resolve local DNS server address
+    if (options.dns_server_address) {
+        if (!BAddr_Parse2(&dns_server_address, options.dns_server_address, NULL, 0, 0)) {
+            BLog(BLOG_ERROR, "local dns server addr: BAddr_Parse2 failed");
+            return 0;
+        }
+    }
 
     return 1;
 }
@@ -1020,7 +1191,7 @@ BAddr baddr_from_lwip (int is_ipv6, const ipX_addr_t *ipx_addr, uint16_t port_ho
     return addr;
 }
 
-void lwip_init_job_hadler (void *unused)
+void lwip_init_job_handler (void *unused)
 {
     ASSERT(!quitting)
     ASSERT(netif_ipaddr.type == BADDR_TYPE_IPV4)
@@ -1201,9 +1372,8 @@ void device_read_handler_send (void *unused, uint8_t *data, int data_len)
 int process_device_udp_packet (uint8_t *data, int data_len)
 {
     ASSERT(data_len >= 0)
-
-    // do nothing if we don't have udpgw
-    if (!options.udpgw_remote_server_addr) {
+    // do nothing if we don't have udpgw or dns resolver
+    if (!options.udpgw_remote_server_addr && !options.dns_server_address) {
         goto fail;
     }
 
@@ -1220,12 +1390,14 @@ int process_device_udp_packet (uint8_t *data, int data_len)
         case 4: {
             // ignore non-UDP packets
             if (data_len < sizeof(struct ipv4_header) || data[offsetof(struct ipv4_header, protocol)] != IPV4_PROTOCOL_UDP) {
+                BLog(BLOG_DEBUG, "got non-UDP packet, protocol: %d", data[offsetof(struct ipv4_header, protocol)]);
                 goto fail;
             }
 
             // parse IPv4 header
             struct ipv4_header ipv4_header;
             if (!ipv4_check(data, data_len, &ipv4_header, &data, &data_len)) {
+                BLog(BLOG_WARNING, "got non-IP packet");
                 goto fail;
             }
 
@@ -1251,8 +1423,8 @@ int process_device_udp_packet (uint8_t *data, int data_len)
 
             // if transparent DNS is enabled, any packet arriving at out netif
             // address to port 53 is considered a DNS packet
-            is_dns = (options.udpgw_transparent_dns &&
-                      ipv4_header.destination_address == netif_ipaddr.ipv4 &&
+            is_dns = (options.transparent_dns &&
+                      // ipv4_header.destination_address == netif_ipaddr.ipv4 &&
                       udp_header.dest_port == hton16(53));
         } break;
 
@@ -1308,8 +1480,32 @@ int process_device_udp_packet (uint8_t *data, int data_len)
         goto fail;
     }
 
-    // submit packet to udpgw
-    SocksUdpGwClient_SubmitPacket(&udpgw_client, local_addr, remote_addr, is_dns, data, data_len);
+    char local_addr_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&local_addr, local_addr_str);
+    char remote_addr_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&remote_addr, remote_addr_str);
+    BLog(BLOG_INFO, "UDP: %s -> %s. DNS: %d", local_addr_str, remote_addr_str, is_dns);
+
+    if (options.dns_server_address && is_dns) {
+        int sent_bytes = udp_send(udp_pcb.sockfd, data, data_len);
+        if (sent_bytes < data_len) {
+            BLog(BLOG_ERROR, "udp_send: sent %d bytes, expected %d",
+                 sent_bytes, data_len);
+            return 1;
+        }
+
+        char dns_id_str[DNS_ID_STRLEN];
+        dns_get_header_id_str(dns_id_str, data);
+        if (!BStringMap_Set(&udp_pcb.map, dns_id_str, local_addr_str)) {
+            BLog(BLOG_ERROR,
+                 "failed to associate dns request id to local address");
+            return 1;
+        }
+    } else if (options.udpgw_remote_server_addr) {
+        // submit packet to udpgw
+        SocksUdpGwClient_SubmitPacket(&udpgw_client, local_addr, remote_addr,
+                                      is_dns, data, data_len);
+    }
 
     return 1;
 
@@ -1441,6 +1637,12 @@ err_t listener_accept_func (void *arg, struct tcp_pcb *newpcb, err_t err)
     // read addresses
     client->local_addr = baddr_from_lwip(PCB_ISIPV6(newpcb), &newpcb->local_ip, newpcb->local_port);
     client->remote_addr = baddr_from_lwip(PCB_ISIPV6(newpcb), &newpcb->remote_ip, newpcb->remote_port);
+
+    char local_addr_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&client->local_addr, local_addr_str);
+    char remote_addr_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&client->remote_addr, remote_addr_str);
+    BLog(BLOG_NOTICE, "TCP: %s -> %s", local_addr_str, remote_addr_str);
 
     // get destination address
     BAddr addr = client->local_addr;
@@ -1968,7 +2170,7 @@ err_t client_sent_func (void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-void udpgw_client_handler_received (void *unused, BAddr local_addr, BAddr remote_addr, const uint8_t *data, int data_len)
+void udp_send_packet_to_device (void *unused, BAddr local_addr, BAddr remote_addr, const uint8_t *data, int data_len)
 {
     ASSERT(options.udpgw_remote_server_addr)
     ASSERT(local_addr.type == BADDR_TYPE_IPV4 || local_addr.type == BADDR_TYPE_IPV6)
