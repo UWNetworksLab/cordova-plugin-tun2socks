@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Ambroz Bizjak <ambrop7@gmail.com>
+ * Copyright (C) Alberto Lalama <alalama@stanford.edu>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -22,31 +22,57 @@
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Definitions for the DNS protocol.
  */
 
-// name of the program
-#define PROGRAM_NAME "tun2socks"
+#ifndef BADVPN_MISC_DNS_PROTO_H
+#define BADVPN_MISC_DNS_PROTO_H
 
-// size of temporary buffer for passing data from the SOCKS server to TCP for sending
-#define CLIENT_SOCKS_RECV_BUF_SIZE 8192
+#include <stdint.h>
+#include <misc/byteorder.h>
 
-// maximum number of udpgw connections
-#define DEFAULT_UDPGW_MAX_CONNECTIONS 256
+B_START_PACKED
+struct dns_header {
+  uint16_t id;
+  uint8_t qr_opcode_aa_tc_rd;
+  uint8_t ra_z_rcode;
+  uint16_t qdcount;
+  uint16_t ancount;
+  uint16_t nscount;
+  uint16_t arcount;
+} B_PACKED;
+B_END_PACKED
 
-// udpgw per-connection send buffer size, in number of packets
-#define DEFAULT_UDPGW_CONNECTION_BUFFER_SIZE 8
+// DNS header field masks
+#define DNS_QR 0x80
+#define DNS_TC 0x02
+#define DNS_Z  0x70
 
-// udpgw reconnect time after connection fails
-#define UDPGW_RECONNECT_TIME 5000
+#define DNS_ID_STRLEN 6
 
-// udpgw keepalive sending interval
-#define UDPGW_KEEPALIVE_TIME 10000
+static void dns_get_header_id_str(char* id_str, uint8_t* data) {
+  struct dns_header* dnsh = (struct dns_header*)data;
+  sprintf(id_str, "%u", dnsh->id);
+  id_str[DNS_ID_STRLEN - 1] = '\0';
+}
 
-// option to override the destination addresses to give the SOCKS server
-//#define OVERRIDE_DEST_ADDR "10.111.0.2:2000"
+static int dns_check(const uint8_t *data, int data_len,
+                     struct dns_header *out_header) {
+  ASSERT(data_len >= 0)
+  ASSERT(out_header)
 
-// maximum number of bytes for udp send/recv
- #define UDP_MAX_DATAGRAM_BYTES 512
+  // parse DNS header
+  if (data_len < sizeof(struct dns_header)) {
+    return 0;
+  }
+  memcpy(out_header, data, sizeof(*out_header));
 
-// port for dns traffic
- #define UDP_DNS_PORT 53
+  // verify DNS header is request
+  return (out_header->qr_opcode_aa_tc_rd & DNS_QR) == 0 /* query */
+            && (out_header->ra_z_rcode & DNS_Z) == 0 /* Z is Zero */
+            && out_header->qdcount > 0 /* some questions */
+            && !out_header->nscount && !out_header->ancount /* no answers */;
+}
+
+ #endif  // BADVPN_MISC_DNS_PROTO_H
