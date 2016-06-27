@@ -1,0 +1,20 @@
+apply plugin: 'com.android.application'
+
+android {
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["libs"]
+            jni.srcDirs = []
+        }
+    }
+    packagingOptions {
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/LICENSE'
+    }
+}
+
+dependencies {
+    compile fileTree(dir: 'libs', include: ['*.jar', '*.so'])
+    compile 'com.android.support:appcompat-v7:23.4.0'
+}
+
