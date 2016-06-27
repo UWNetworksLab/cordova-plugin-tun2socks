@@ -1,0 +1,21 @@
+android {
+    compileSdkVersion 23
+    buildToolsVersion "23.0.3"
+
+    compileOptions {
+      sourceCompatibility JavaVersion.VERSION_1_7
+      targetCompatibility JavaVersion.VERSION_1_7
+    }
+
+    defaultConfig {
+        minSdkVersion 15
+        targetSdkVersion 23
+        versionCode 1
+        versionName "1.0"
+    }
+
+    packagingOptions {
+      exclude 'META-INF/NOTICE'
+      exclude 'META-INF/LICENSE'
+    }
+}
