@@ -59,8 +59,9 @@
 
     <framework src="src/android/org/uproxy/tun2socks/build.gradle" custom="true" type="gradleReference" />
 
-    <resource-file src="src/android/libs/armeabi-v7a/libtun2socks.so" target="libs/armeabi-v7a/libtun2socks.so" />
-    <resource-file src="src/android/libs/jsocks.jar" target="libs/jsocks.jar" />
+    <resource-file src="src/badvpn" target="badvpn" />
+    <resource-file src="src/android/jni" target="jni" />
+    <resource-file src="src/android/libs" target="libs" />
 
     <js-module src="tun2socks.js" name="tun2socks">
       <clobbers target="tun2socks" />

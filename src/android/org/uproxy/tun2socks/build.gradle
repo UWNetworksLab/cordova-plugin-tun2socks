@@ -7,9 +7,24 @@ android {
             jni.srcDirs = []
         }
     }
+
     packagingOptions {
         exclude 'META-INF/NOTICE'
         exclude 'META-INF/LICENSE'
+    }
+
+    task buildNative(type: Exec, description: 'Compile JNI source via NDK') {
+        commandLine 'ndk-build', '-C', file('jni').absolutePath
+    }
+
+    task cleanNative(type: Exec, description: 'Clean JNI object files') {
+        commandLine 'ndk-build', '-C', file('jni').absolutePath, 'clean'
+    }
+
+    clean.dependsOn 'cleanNative'
+
+    tasks.withType(JavaCompile) {
+        compileTask -> compileTask.dependsOn buildNative
     }
 }
 
