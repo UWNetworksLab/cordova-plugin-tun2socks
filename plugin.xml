@@ -36,28 +36,11 @@
     </config-file>
 
     <source-file
-      src="src/android/org/uproxy/tun2socks/DnsResolverService.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/Tun2Socks.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/Tun2SocksJni.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/Tunnel.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/TunnelManager.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/TunnelState.java"
-      target-dir="src/org/uproxy/tun2socks" />
-    <source-file
-      src="src/android/org/uproxy/tun2socks/TunnelVpnService.java"
+      src="src/android/org/uproxy/tun2socks"
       target-dir="src/org/uproxy/tun2socks" />
 
-    <framework src="src/android/org/uproxy/tun2socks/build.gradle" custom="true" type="gradleReference" />
+    <framework src="src/android/org/uproxy/tun2socks/build.gradle"
+      custom="true" type="gradleReference" />
 
     <resource-file src="src/badvpn" target="badvpn" />
     <resource-file src="src/android/jni" target="jni" />
