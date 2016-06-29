@@ -82,10 +82,12 @@ public class Tun2Socks extends CordovaPlugin {
     // VpnService: need to display OS user warning. If whole device
     // option is selected and we expect to use VpnService, so the prompt here in
     // the UI before starting the service.
-    Intent intent = VpnService.prepare(getBaseContext());
-    if (intent != null) {
+    Intent prepareVpnIntent = VpnService.prepare(getBaseContext());
+    if (prepareVpnIntent != null) {
       Log.d(LOG_TAG, "prepare vpn with activity");
-      this.cordova.getActivity().startActivityForResult(intent, REQUEST_CODE_PREPARE_VPN);
+      this.cordova.setActivityResultCallback(Tun2Socks.this);
+      this.cordova.getActivity().startActivityForResult(
+          prepareVpnIntent, REQUEST_CODE_PREPARE_VPN);
       return false;
     }
     return true;
