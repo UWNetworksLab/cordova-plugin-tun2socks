@@ -2,29 +2,34 @@ package org.uproxy.tun2socks;
 
 import android.annotation.TargetApi;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.VpnService;
 import android.os.Build;
+import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
-import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.CallbackContext;
+import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
-import org.json.JSONObject;
 
 public class Tun2Socks extends CordovaPlugin {
 
   private static final String LOG_TAG = "Tun2Socks";
   private static final String START_ACTION = "start";
   private static final String STOP_ACTION = "stop";
+  private static final String ON_DISCONNECT_ACTION = "onDisconnect";
   private static final int REQUEST_CODE_PREPARE_VPN = 100;
   // Standard activity result: operation succeeded.
   public static final int RESULT_OK = -1;
 
   private String m_socksServerAddress;
+  private CallbackContext m_onDisconnectCallback = null;
 
   @Override
   public boolean execute(String action, JSONArray args, CallbackContext callbackContext)
@@ -43,10 +48,14 @@ public class Tun2Socks extends CordovaPlugin {
     } else if (action.equals(STOP_ACTION)) {
       stopTunnelService();
       return true;
+    } else if (action.equals(ON_DISCONNECT_ACTION)) {
+      m_onDisconnectCallback = callbackContext;
+      return true;
     }
     return false;
   }
 
+  @TargetApi(Build.VERSION_CODES.M)
   @Override
   protected void pluginInitialize() {
     Log.d(LOG_TAG, Tun2SocksJni.testTun2Socks());
@@ -58,6 +67,11 @@ public class Tun2Socks extends CordovaPlugin {
       Log.e(LOG_TAG, "Failed to bind process to network.");
       return;
     }
+
+    LocalBroadcastManager.getInstance(getBaseContext())
+        .registerReceiver(
+            m_disconnectBroadcastReceiver,
+            new IntentFilter(TunnelVpnService.TUNNEL_VPN_DISCONNECT_BROADCAST));
   }
 
   protected void prepareAndStartTunnelService(CallbackContext callbackContext) {
@@ -137,4 +151,29 @@ public class Tun2Socks extends CordovaPlugin {
   private Context getBaseContext() {
     return this.cordova.getActivity().getApplicationContext();
   }
+
+  public void onDisconnect() {
+    if (m_onDisconnectCallback != null) {
+      PluginResult result = new PluginResult(PluginResult.Status.OK);
+      result.setKeepCallback(true);
+      m_onDisconnectCallback.sendPluginResult(result);
+    }
+  }
+
+  private DisconnectBroadcastReceiver m_disconnectBroadcastReceiver =
+      new DisconnectBroadcastReceiver(Tun2Socks.this);
+
+  private class DisconnectBroadcastReceiver extends BroadcastReceiver {
+    private Tun2Socks m_handler;
+
+    public DisconnectBroadcastReceiver(Tun2Socks handler) {
+      m_handler = handler;
+    }
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+      // Callback into handler so we can communicate the disconnect event to js.
+      m_handler.onDisconnect();
+    }
+  };
 }

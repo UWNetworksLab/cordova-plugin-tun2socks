@@ -25,12 +25,15 @@ import android.net.VpnService;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
+import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
 @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
 public class TunnelVpnService extends VpnService {
 
   private static final String LOG_TAG = "TunnelVpnService";
+  public static final String TUNNEL_VPN_DISCONNECT_BROADCAST =
+      "tunnelVpnDisconnectBroadcast";
 
   private TunnelManager m_tunnelManager = new TunnelManager(this);
 
@@ -72,11 +75,18 @@ public class TunnelVpnService extends VpnService {
   @Override
   public void onRevoke() {
     Log.e(LOG_TAG, "VPN service revoked.");
+    broadcastVpnDisconnect();
     // stopSelf will trigger onDestroy in the main thread.
     stopSelf();
   }
 
   public VpnService.Builder newBuilder() {
     return new VpnService.Builder();
+  }
+
+  private void broadcastVpnDisconnect() {
+    Intent disconnectBroadcast = new Intent(TUNNEL_VPN_DISCONNECT_BROADCAST);
+    LocalBroadcastManager.getInstance(TunnelVpnService.this)
+        .sendBroadcast(disconnectBroadcast);
   }
 }
