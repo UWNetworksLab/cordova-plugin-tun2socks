@@ -7,10 +7,13 @@ import android.os.IBinder;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.lang.StringBuffer;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -20,6 +23,9 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 import socks.Socks5Proxy;
 import socks.SocksSocket;
@@ -35,7 +41,7 @@ public class DnsResolverService extends Service {
 
   private final IBinder binder = new LocalBinder();
   private String m_socksServerAddress;
-  private DnsUdpToSocksResolver dnsResolver = null;
+  private DnsUdpToHttps dnsResolver = null;
 
   public class LocalBinder extends Binder {
     public DnsResolverService getService() {
@@ -61,7 +67,7 @@ public class DnsResolverService extends Service {
   @Override
   public void onCreate() {
     Log.i(LOG_TAG, "create");
-    dnsResolver = new DnsUdpToSocksResolver(DnsResolverService.this);
+    dnsResolver = new DnsUdpToHttps(DnsResolverService.this);
     dnsResolver.start();
   }
 
@@ -83,19 +89,20 @@ public class DnsResolverService extends Service {
     String ip = m_socksServerAddress.substring(0, separatorIndex);
     int port = Integer.parseInt(m_socksServerAddress.substring(separatorIndex + 1));
     return new InetSocketAddress(ip, port);
-    // return new InetSocketAddress("104.236.42.33", 3030);
   }
 
-  private class DnsUdpToSocksResolver extends Thread {
-    private static final String LOG_TAG = "DnsUdpToSocksResolver";
-    private static final String DNS_RESOLVER_IP = "8.8.8.8";
+  private class DnsUdpToHttps extends Thread {
+    private static final String LOG_TAG = "DnsUdpToHttps";
+    private static final String DNS_RESOLVER_IP = "173.194.66.102";//"216.58.219.206";
+    private static final String GOOGLE_DNS_HOSTNAME = "dns.google.com";
     private static final int MAX_UDP_DATAGRAM_LEN = 512; // DNS max over UDP
-    private static final int DEFAULT_DNS_PORT = 53;
+    private static final int DEFAULT_DNS_PORT = 443;
 
     // DNS bit masks
     private static final byte DNS_QR = (byte) 0x80;
     private static final byte DNS_TC = (byte) 0x02;
     private static final byte DNS_Z = (byte) 0x70;
+    private static final byte DNS_RCODE = (byte) 0xF;
     // DNS header constants
     private static final int DNS_HEADER_SIZE = 12;
     private static final int QR_OPCODE_AA_TC_OFFSET = 2;
@@ -105,10 +112,14 @@ public class DnsResolverService extends Service {
     private static final int NSCOUNT_OFFSET = 8;
     private static final int ARCOUNT_OFFSET = 10;
 
+    // HTTP header constants
+    private static final String HTTP_HEADER_RESPONSE_CODE_OK = "200 OK";
+    private static final String HTTP_HEADER_CONTENT_LENGHT = "Content-Length: ";
+
     private volatile DatagramSocket udpSocket = null;
     private DnsResolverService m_parentService;
 
-    public DnsUdpToSocksResolver(DnsResolverService parentService) {
+    public DnsUdpToHttps(DnsResolverService parentService) {
       m_parentService = parentService;
     }
 
@@ -122,17 +133,19 @@ public class DnsResolverService extends Service {
       }
       Log.d(LOG_TAG, "SOCKS server address: " + socksServerAddress.toString());
 
+      InetSocketAddress googleDnsAddress = new InetSocketAddress(DNS_RESOLVER_IP, DEFAULT_DNS_PORT);
+
       Socks5Proxy socksProxy = null;
-      InetAddress dnsServerAddress = null;
       try {
         socksProxy = new Socks5Proxy(socksServerAddress.getAddress(), socksServerAddress.getPort());
-        dnsServerAddress = InetAddress.getByName(DNS_RESOLVER_IP);
         udpSocket = new DatagramSocket();
       } catch (Throwable e) {
         e.printStackTrace();
         return;
       }
       broadcastUdpSocketAddress();
+      SSLSocketFactory sslFactory =
+          (SSLSocketFactory)SSLSocketFactory.getDefault();
 
       try {
         while (!isInterrupted()) {
@@ -151,40 +164,48 @@ public class DnsResolverService extends Service {
                   udpPacket.getPort(),
                   new String(udpBuffer, 0, udpPacket.getLength())));
 
+          byte[] dnsRequest = new byte[udpPacket.getLength()];
+          System.arraycopy(udpPacket.getData(), 0, dnsRequest, 0, dnsRequest.length);
           if (!validateDnsRequest(udpPacket)) {
             Log.i(LOG_TAG, "Not a DNS request.");
             continue;
           }
 
           Socket dnsSocket = null;
-          DataOutputStream dnsOutputStream = null;
-          DataInputStream dnsInputStream = null;
+          SSLSocket sslSocket = null;
           try {
-            dnsSocket = new SocksSocket(socksProxy, dnsServerAddress, DEFAULT_DNS_PORT);
-            dnsSocket.setKeepAlive(true);
-            dnsOutputStream = new DataOutputStream(dnsSocket.getOutputStream());
-            dnsInputStream = new DataInputStream(dnsSocket.getInputStream());
+            dnsSocket = new SocksSocket(socksProxy, DNS_RESOLVER_IP,
+                                        DEFAULT_DNS_PORT);
+            dnsSocket.connect(googleDnsAddress);
+            sslSocket = (SSLSocket) sslFactory.createSocket(
+                dnsSocket, socksServerAddress.getHostString(),
+                socksServerAddress.getPort(), true);
           } catch (IOException e) {
             e.printStackTrace();
             continue;
           }
-          dnsOutputStream.writeShort(udpPacket.getLength());
-          dnsOutputStream.write(udpPacket.getData());
-          dnsOutputStream.flush();
+          String name = parseDnsRequestName(dnsRequest);
+          if (name == null) {
+            Log.e(LOG_TAG, "Failed to read name from malformed DNS request");
+            continue;
+          }
+          short dnsRequestId = parseDnsRequestId(dnsRequest);
+          Log.d(LOG_TAG, "NAME: " + name + " ID: " + dnsRequestId);
 
           try {
-            short dnsResponseBytes = dnsInputStream.readShort();
-            Log.d(LOG_TAG, String.format("DNS: got %d bytes", dnsResponseBytes));
-            byte dnsBuffer[] = new byte[dnsResponseBytes];
-            dnsInputStream.readFully(dnsBuffer);
-
+            performDnsHttpRequest(name, sslSocket);
+            byte[] dnsResponse = readBinaryDnsHttpResponse(sslSocket);
+            if (dnsResponse == null) {
+              continue;
+            }
+            writeRequestIdToDnsResponse(dnsResponse, dnsRequestId);
+            // Log.d(LOG_TAG, ">> RESPONSE: " + bytesToHex(dnsResponse, dnsResponse.length));
             DatagramPacket outPacket =
-                new DatagramPacket(dnsBuffer, dnsBuffer.length, udpPacket.getSocketAddress());
+                new DatagramPacket(dnsResponse, dnsResponse.length,
+                                   udpPacket.getSocketAddress());
             udpSocket.send(outPacket);
           } catch (SocketException e) {
             e.printStackTrace();
-          } catch (EOFException e) {
-            Log.d(LOG_TAG, "DNS: failed to send response");
           } finally {
             try {
               if (dnsSocket != null) {
@@ -210,6 +231,69 @@ public class DnsResolverService extends Service {
       interrupt();
     }
 
+    // TODO(alalama): debug only
+    private String bytesToHex(byte[] in, int len) {
+      final StringBuilder builder = new StringBuilder();
+      for (int i = 0; i < len; ++i) {
+        byte b = in[i];
+        builder.append(String.format("%02x", b));
+      }
+      return builder.toString();
+    }
+
+    // Performs a DNS request for |name| over HTTP.
+    // Assumes |socket| is connected.
+    private void performDnsHttpRequest(final String name, Socket socket)
+        throws IOException {
+      PrintWriter printWriter = new PrintWriter(socket.getOutputStream());
+      printWriter.println(String.format("GET /resolve?name=%s&encoding=raw HTTP/1.1", name));
+      printWriter.println("Host: dns.google.com");
+      printWriter.println("Connection: close");
+      printWriter.println("");  // CLRF.
+      printWriter.flush();
+    }
+
+    // Reads the binary payload from a DNS-over-HTTPS response.
+    // Returns null on failed responses.
+    private byte[] readBinaryDnsHttpResponse(Socket socket) {
+      try {
+        DataInputStream inputStream =
+            new DataInputStream(socket.getInputStream());
+        String line = inputStream.readLine();  // Read response status.
+        if (line == null || !line.contains(HTTP_HEADER_RESPONSE_CODE_OK)) {
+          Log.e(LOG_TAG, "Failed to receive OK response from DNS resolver.");
+          return null;
+        }
+        // Read headers.
+        int contentLenght = 0;
+        while (line != null && !line.isEmpty()) {
+          if (line.contains(HTTP_HEADER_CONTENT_LENGHT)) {
+            contentLenght = Integer.parseInt(
+                line.substring(HTTP_HEADER_CONTENT_LENGHT.length()));
+          }
+          line = inputStream.readLine();
+        }
+        if (contentLenght == 0) {
+          Log.e(LOG_TAG, "Failed to receive Content-Length in HTTP response.");
+          return null;
+        }
+        // Stream should be positioned at the DNS binary payload.
+        byte dnsResponse[] = new byte[contentLenght];
+        inputStream.readFully(dnsResponse);
+        return dnsResponse;
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      return null;
+    }
+
+    // Writes |dsnRequestId| to |dnsRequestId| ID header.
+    private void writeRequestIdToDnsResponse(
+        byte[] dnsResponse, short dnsRequestId) {
+      ByteBuffer buffer = ByteBuffer.wrap(dnsResponse);
+      buffer.putShort(dnsRequestId);
+    }
+
     private boolean validateDnsRequest(DatagramPacket packet) {
       if (packet.getLength() < DNS_HEADER_SIZE) {
         return false;
@@ -227,6 +311,34 @@ public class DnsResolverService extends Service {
           && qdcount > 0 /* some questions */
           && nscount == 0
           && ancount == 0; /* no answers */
+    }
+
+    // Returns the domain names present in the DNS request.
+    // Assumes the DNS packet has been validated.
+    private String parseDnsRequestName(byte[] dnsRequest) {
+      ByteBuffer buffer = ByteBuffer.wrap(dnsRequest);
+      buffer.position(DNS_HEADER_SIZE);  // Position at the start of questions
+      StringBuffer nameBuffer = new StringBuffer();
+
+      byte labelLength = buffer.get();
+      while (labelLength > 0) {
+        if (labelLength > buffer.limit()) {
+          return null;
+        }
+        byte[] labelBytes = new byte[labelLength];
+        buffer.get(labelBytes);
+        String label = new String(labelBytes);
+        nameBuffer.append(label);
+        nameBuffer.append(".");
+
+        labelLength = buffer.get();
+      }
+      return nameBuffer.toString();
+    }
+
+    private short parseDnsRequestId(byte[] dnsRequest) {
+      ByteBuffer buffer = ByteBuffer.wrap(dnsRequest);
+      return buffer.getShort();
     }
 
     private void broadcastUdpSocketAddress() {
