@@ -47,6 +47,7 @@ public class Tun2Socks extends CordovaPlugin {
       return true;
     } else if (action.equals(STOP_ACTION)) {
       stopTunnelService();
+      callbackContext.success("Stopped tun2socks.");
       return true;
     } else if (action.equals(ON_DISCONNECT_ACTION)) {
       m_onDisconnectCallback = callbackContext;
@@ -72,6 +73,13 @@ public class Tun2Socks extends CordovaPlugin {
         .registerReceiver(
             m_disconnectBroadcastReceiver,
             new IntentFilter(TunnelVpnService.TUNNEL_VPN_DISCONNECT_BROADCAST));
+  }
+
+  @Override
+  public void onDestroy() {
+    // Stop tunnel service in case the user has quit the app without
+    // disconnecting the VPN.
+    stopTunnelService();
   }
 
   protected void prepareAndStartTunnelService(CallbackContext callbackContext) {
