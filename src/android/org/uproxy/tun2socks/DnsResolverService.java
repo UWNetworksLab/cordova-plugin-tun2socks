@@ -69,7 +69,7 @@ public class DnsResolverService extends Service {
   public void onDestroy() {
     Log.i(LOG_TAG, "destroy");
     if (dnsResolver != null) {
-      dnsResolver.kill();
+      dnsResolver.interrupt();
     }
   }
 
@@ -83,7 +83,6 @@ public class DnsResolverService extends Service {
     String ip = m_socksServerAddress.substring(0, separatorIndex);
     int port = Integer.parseInt(m_socksServerAddress.substring(separatorIndex + 1));
     return new InetSocketAddress(ip, port);
-    // return new InetSocketAddress("104.236.42.33", 3030);
   }
 
   private class DnsUdpToSocksResolver extends Thread {
@@ -116,7 +115,7 @@ public class DnsResolverService extends Service {
       byte[] udpBuffer = new byte[MAX_UDP_DATAGRAM_LEN];
       DatagramPacket udpPacket = new DatagramPacket(udpBuffer, udpBuffer.length);
       InetSocketAddress socksServerAddress =
-          m_parentService.getSocksServerAddress(); //new InetSocketAddress("104.236.42.33", 3000);
+          m_parentService.getSocksServerAddress();
       if (socksServerAddress == null) {
         return;
       }
@@ -125,7 +124,8 @@ public class DnsResolverService extends Service {
       Socks5Proxy socksProxy = null;
       InetAddress dnsServerAddress = null;
       try {
-        socksProxy = new Socks5Proxy(socksServerAddress.getAddress(), socksServerAddress.getPort());
+        socksProxy = new Socks5Proxy(socksServerAddress.getAddress(),
+                                     socksServerAddress.getPort());
         dnsServerAddress = InetAddress.getByName(DNS_RESOLVER_IP);
         udpSocket = new DatagramSocket();
       } catch (Throwable e) {
@@ -174,7 +174,6 @@ public class DnsResolverService extends Service {
 
           try {
             short dnsResponseBytes = dnsInputStream.readShort();
-            Log.d(LOG_TAG, String.format("DNS: got %d bytes", dnsResponseBytes));
             byte dnsBuffer[] = new byte[dnsResponseBytes];
             dnsInputStream.readFully(dnsBuffer);
 
@@ -204,10 +203,6 @@ public class DnsResolverService extends Service {
           udpSocket.close();
         }
       }
-    }
-
-    public void kill() {
-      interrupt();
     }
 
     private boolean validateDnsRequest(DatagramPacket packet) {

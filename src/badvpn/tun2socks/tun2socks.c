@@ -279,7 +279,7 @@ typedef struct {
 
 UdpPcb udp_pcb;
 
-static int udp_init(UdpPcb* udp_pcb, int remote_port);
+static int udp_init(UdpPcb* udp_pcb);
 static int udp_send(int sockfd, uint8_t* data, int data_len);
 static int udp_recv(int sockfd, uint8_t* buffer, int buffer_len);
 static void udp_fd_handler(UdpPcb* udp_pcb, int event);
@@ -320,8 +320,8 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
 }
 
 // Initializes a UDP socket, binds it locally and connects it to a local
-// address on |remote_port|.
-static int udp_init(UdpPcb* udp_pcb, int remote_port) {
+// address.
+static int udp_init(UdpPcb* udp_pcb) {
     // Init receive buffer
     udp_pcb->udp_recv_buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
     if (!udp_pcb->udp_recv_buffer) {
@@ -432,13 +432,6 @@ void PsiphonLog(const char *levelStr, const char *channelStr, const char *msgStr
     (*g_env)->DeleteLocalRef(g_env, msg);
 }
 
-// TODO(alalama): remove this method, for debug only.
-JNIEXPORT jstring JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_testTun2Socks(
-    JNIEnv* env,
-    jclass cls) {
-    return (*env)->NewStringUTF(env, "tun2socks loaded!");
- }
-
 JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     JNIEnv* env,
     jclass cls,
@@ -467,7 +460,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     options.tun_fd = vpnInterfaceFileDescriptor;
     options.tun_mtu = vpnInterfaceMTU;
     options.set_signal = 0;
-    options.loglevel = 4;  // TODO(alalama): lower for release.
+    options.loglevel = 4;
 
     BLog_InitPsiphon();
 
@@ -702,8 +695,7 @@ void run()
     num_clients = 0;
 
     // ==== UPROXY ====
-    // TODO(alalama): make this port an argument
-    if (!udp_init(&udp_pcb, 5300)) {
+    if (!udp_init(&udp_pcb)) {
         goto fail5;
     }
     // ==== UPROXY ====
@@ -1425,7 +1417,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             // address to port 53 is considered a DNS packet
             is_dns = (options.transparent_dns &&
                       // ipv4_header.destination_address == netif_ipaddr.ipv4 &&
-                      udp_header.dest_port == hton16(53));
+                      udp_header.dest_port == hton16(UDP_DNS_PORT));
         } break;
 
         case 6: {
