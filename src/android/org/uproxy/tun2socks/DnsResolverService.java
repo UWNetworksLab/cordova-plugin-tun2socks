@@ -25,7 +25,7 @@ import socks.Socks5Proxy;
 import socks.SocksSocket;
 
 // This class listens on a UDP socket for incoming DNS traffic, which is proxy'd
-// through SOCKS over TCP to Honest DNS.
+// through SOCKS over TCP to Google's Public DNS.
 public class DnsResolverService extends Service {
 
   private static final String LOG_TAG = "DnsResolverService";
@@ -88,7 +88,7 @@ public class DnsResolverService extends Service {
   private class DnsUdpToSocksResolver extends Thread {
     private static final String LOG_TAG = "DnsUdpToSocksResolver";
     private static final String DNS_RESOLVER_IP = "8.8.8.8";
-    private static final int MAX_UDP_DATAGRAM_LEN = 512; // DNS max over UDP
+    private static final int MAX_UDP_DATAGRAM_LEN = 32767; // DNS max over UDP
     private static final int DEFAULT_DNS_PORT = 53;
 
     // DNS bit masks
@@ -151,7 +151,7 @@ public class DnsResolverService extends Service {
                   udpPacket.getPort(),
                   new String(udpBuffer, 0, udpPacket.getLength())));
 
-          if (!validateDnsRequest(udpPacket)) {
+          if (!isValidDnsRequest(udpPacket)) {
             Log.i(LOG_TAG, "Not a DNS request.");
             continue;
           }
@@ -205,7 +205,7 @@ public class DnsResolverService extends Service {
       }
     }
 
-    private boolean validateDnsRequest(DatagramPacket packet) {
+    private boolean isValidDnsRequest(DatagramPacket packet) {
       if (packet.getLength() < DNS_HEADER_SIZE) {
         return false;
       }

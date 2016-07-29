@@ -46,7 +46,7 @@
 //#define OVERRIDE_DEST_ADDR "10.111.0.2:2000"
 
 // maximum number of bytes for udp send/recv
- #define UDP_MAX_DATAGRAM_BYTES 512
+ #define UDP_MAX_DATAGRAM_BYTES 32767
 
 // port for dns traffic
  #define UDP_DNS_PORT 53

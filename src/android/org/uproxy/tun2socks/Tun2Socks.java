@@ -56,6 +56,8 @@ public class Tun2Socks extends CordovaPlugin {
     return false;
   }
 
+  // Initializes the plugin.
+  // Requires API 23 (Marshmallow) to call bindProcessToNetwork.
   @TargetApi(Build.VERSION_CODES.M)
   @Override
   protected void pluginInitialize() {
@@ -101,8 +103,8 @@ public class Tun2Socks extends CordovaPlugin {
   @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
   protected boolean prepareVpnService() throws ActivityNotFoundException {
     // VpnService: need to display OS user warning. If whole device
-    // option is selected and we expect to use VpnService, so the prompt here in
-    // the UI before starting the service.
+    // option is selected and we expect to use VpnService, so show the prompt
+    // in the UI before starting the service.
     Intent prepareVpnIntent = VpnService.prepare(getBaseContext());
     if (prepareVpnIntent != null) {
       Log.d(LOG_TAG, "prepare vpn with activity");

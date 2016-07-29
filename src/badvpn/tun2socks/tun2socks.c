@@ -320,7 +320,7 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
 }
 
 // Initializes a UDP socket, binds it locally and connects it to a local
-// address.
+// address. Returns the socket address on success, and 0 otherwise.
 static int udp_init(UdpPcb* udp_pcb) {
     // Init receive buffer
     udp_pcb->udp_recv_buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
@@ -334,7 +334,7 @@ static int udp_init(UdpPcb* udp_pcb) {
         BLog(BLOG_ERROR, "udp_init: failed to create socket");
         return 0;
     }
-    // Bind to any local address in order to receive data
+    // Bind to the ANY address in order to receive data
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
