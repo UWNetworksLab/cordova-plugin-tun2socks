@@ -59,7 +59,6 @@ public class Tun2Socks extends CordovaPlugin {
   @TargetApi(Build.VERSION_CODES.M)
   @Override
   protected void pluginInitialize() {
-    Log.d(LOG_TAG, Tun2SocksJni.testTun2Socks());
     // Bind process to network before establishing VPN.
     ConnectivityManager cm =
         (ConnectivityManager)
