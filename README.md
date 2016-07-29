@@ -10,6 +10,20 @@ To handle DNS resoution, we have implemented a local DNS resolver that intercept
 
 This plugin targets Android devices running Marshmellow (API 23), or higher. This requirement stems from calling `bindProcessToNetwork`, a [connectivity API](https://developer.android.com/reference/android/net/ConnectivityManager.html#bindProcessToNetwork(android.net.Network)) introduced in version 23, which allows the client application traffic to bypass the VPN.
 
+### Javascript API
+
+`start(socksServerAddress:string) : Promise<string>;`
+
+Starts the VPN service, and tunnels all the traffic to the SOCKS5 server at `socksServerAddress`.
+
+`stop(): Promise<string>;`
+
+Stops the VPN service.
+
+`onDisconnect(): Promise<string>;`
+
+Sets a success callback on the returned promise, to be called if the VPN service gets revoked or disconnected.
+
 ### Code Sources
 
 We re-use and have used as a starting point open source code from [Psiphon](https://psiphon.ca/uz@Latn/open-source.html), specifically https://github.com/mei3am/ps.
