@@ -1,0 +1,35 @@
+apply plugin: 'com.android.application'
+
+android {
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["libs"]
+            jni.srcDirs = []
+        }
+    }
+
+    packagingOptions {
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/LICENSE'
+    }
+
+    task buildNative(type: Exec, description: 'Compile JNI source via NDK') {
+        commandLine 'ndk-build', '-C', file('jni').absolutePath
+    }
+
+    task cleanNative(type: Exec, description: 'Clean JNI object files') {
+        commandLine 'ndk-build', '-C', file('jni').absolutePath, 'clean'
+    }
+
+    clean.dependsOn 'cleanNative'
+
+    tasks.withType(JavaCompile) {
+        compileTask -> compileTask.dependsOn buildNative
+    }
+}
+
+dependencies {
+    compile fileTree(dir: 'libs', include: ['*.jar', '*.so'])
+    compile 'com.android.support:appcompat-v7:23.4.0'
+}
+

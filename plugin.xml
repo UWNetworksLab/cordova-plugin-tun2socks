@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        id="cordova-plugin-tun2socks" version="1.0.0">
+  <name>Tun2Socks</name>
+  <description>Tun2Socks for Android</description>
+  <license>Apache 2.0</license>
+  <keywords>cordova,tun2socks,badvpn</keywords>
+
+  <engines>
+    <engine name="cordova-android" version=">=4.0.0-dev" />
+  </engines>
+
+  <platform name="android">
+    <config-file target="res/xml/config.xml" parent="/*">
+      <feature name="Tun2Socks">
+        <param name="android-package" value="org.uproxy.tun2socks.Tun2Socks" />
+        <param name="onload" value="true" />
+      </feature>
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="/manifest">
+      <uses-permission android:name="android.permission.INTERNET" />
+      <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="/manifest/application">
+
+      <service
+        android:name="org.uproxy.tun2socks.TunnelVpnService"
+        android:exported="false"
+        android:label="@string/app_name"
+        android:permission="android.permission.BIND_VPN_SERVICE" />
+      <service
+        android:name="org.uproxy.tun2socks.DnsResolverService"
+        android:exported="false" />
+    </config-file>
+
+    <source-file
+      src="src/android/org/uproxy/tun2socks"
+      target-dir="src/org/uproxy/tun2socks" />
+
+    <framework src="src/android/org/uproxy/tun2socks/build.gradle"
+      custom="true" type="gradleReference" />
+
+    <resource-file src="src/badvpn" target="badvpn" />
+    <resource-file src="src/android/jni" target="jni" />
+    <resource-file src="src/android/libs" target="libs" />
+
+    <js-module src="tun2socks.js" name="tun2socks">
+      <clobbers target="tun2socks" />
+    </js-module>
+  </platform>
+</plugin>
