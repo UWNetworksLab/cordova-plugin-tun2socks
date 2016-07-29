@@ -24,7 +24,6 @@
     </config-file>
 
     <config-file target="AndroidManifest.xml" parent="/manifest/application">
-
       <service
         android:name="org.uproxy.tun2socks.TunnelVpnService"
         android:exported="false"

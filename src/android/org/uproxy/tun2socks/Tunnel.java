@@ -124,6 +124,8 @@ public class Tunnel {
   // tun fd, as these functions may be called via callbacks. Do not use
   // synchronized functions as stop() is synchronized and a deadlock is possible as callbacks
   // can be called while stop holds the lock.
+  //
+  // Calling allowBypass on VPNService.Builder requires API 21 (Lollipop).
   @TargetApi(Build.VERSION_CODES.LOLLIPOP)
   private boolean startVpn() throws Exception {
     mPrivateAddress = selectPrivateAddress();
