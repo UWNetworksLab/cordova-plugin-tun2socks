@@ -320,7 +320,7 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
 }
 
 // Initializes a UDP socket, binds it locally and connects it to a local
-// address. Returns the socket address on success, and 0 otherwise.
+// address. Returns the socket file descriptor on success, and 0 otherwise.
 static int udp_init(UdpPcb* udp_pcb) {
     // Init receive buffer
     udp_pcb->udp_recv_buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
@@ -334,11 +334,11 @@ static int udp_init(UdpPcb* udp_pcb) {
         BLog(BLOG_ERROR, "udp_init: failed to create socket");
         return 0;
     }
-    // Bind to the ANY address in order to receive data
+    // Bind to local host in order to receive data
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    local_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     local_addr.sin_port = htons(0);
     if (bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
         BLog(BLOG_ERROR, "udp_init: failed to bind socket");
@@ -359,7 +359,8 @@ static int udp_init(UdpPcb* udp_pcb) {
         return 0;
     }
     // Monitor socket for read
-    BFileDescriptor_Init(&udp_pcb->bfd, sockfd, (BFileDescriptor_handler)udp_fd_handler, udp_pcb);
+    BFileDescriptor_Init(&udp_pcb->bfd, sockfd,
+                         (BFileDescriptor_handler)udp_fd_handler, udp_pcb);
     if (!BReactor_AddFileDescriptor(&ss, &udp_pcb->bfd)) {
         BLog(BLOG_ERROR, "udp_init: failed to add fd to event loop");
         close(sockfd);

@@ -56,7 +56,6 @@ public class TunnelManager implements Tunnel.HostService {
   }
 
   // Implementation of android.app.Service.onStartCommand
-  @TargetApi(Build.VERSION_CODES.M)
   public int onStartCommand(Intent intent, int flags, int startId) {
     Log.i(LOG_TAG, "onStartCommand");
     LocalBroadcastManager.getInstance(m_parentService)

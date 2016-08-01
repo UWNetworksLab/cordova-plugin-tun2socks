@@ -24,6 +24,7 @@ public class Tun2Socks extends CordovaPlugin {
   private static final String START_ACTION = "start";
   private static final String STOP_ACTION = "stop";
   private static final String ON_DISCONNECT_ACTION = "onDisconnect";
+  private static final String DEVICE_SUPPORTS_PLUGIN_ACTION = "deviceSupportsPlugin";
   private static final int REQUEST_CODE_PREPARE_VPN = 100;
   // Standard activity result: operation succeeded.
   public static final int RESULT_OK = -1;
@@ -51,6 +52,10 @@ public class Tun2Socks extends CordovaPlugin {
       return true;
     } else if (action.equals(ON_DISCONNECT_ACTION)) {
       m_onDisconnectCallback = callbackContext;
+      return true;
+    } else if (action.equals(DEVICE_SUPPORTS_PLUGIN_ACTION)) {
+      callbackContext.sendPluginResult(
+          new PluginResult(PluginResult.Status.OK, hasVpnService()));
       return true;
     }
     return false;
@@ -96,8 +101,9 @@ public class Tun2Socks extends CordovaPlugin {
     }
   }
 
+  // Returns whether the device supports the tunnel VPN service.
   private boolean hasVpnService() {
-    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH;
+    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
   }
 
   @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
