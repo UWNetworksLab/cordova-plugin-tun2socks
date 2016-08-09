@@ -14,5 +14,5 @@ module.exports = {
   start: window.tun2socks._genericHandler.bind({}, "start"),
   stop: window.tun2socks._genericHandler.bind({}, "stop"),
   onDisconnect: window.tun2socks._genericHandler.bind({}, "onDisconnect"),
-  supportsVpn: window.tun2socks._genericHandler.bind({}, "deviceSupportsPlugin")
+  deviceSupportsPlugin: window.tun2socks._genericHandler.bind({}, "deviceSupportsPlugin")
 };

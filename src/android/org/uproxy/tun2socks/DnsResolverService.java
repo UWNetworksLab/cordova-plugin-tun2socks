@@ -177,20 +177,16 @@ public class DnsResolverService extends Service {
 
           byte dnsResponse[] = readStreamPayload(dnsInputStream);
           if (dnsResponse == null) {
+            closeSocket(dnsSocket);
             continue;
           }
+          Log.d(LOG_TAG, "Got DNS response " + dnsResponse.length);
 
           if (!sendUdpPayload(dnsResponse, udpSocket,
                               udpPacket.getSocketAddress())) {
             continue;
           }
-          try {
-            if (dnsSocket != null) {
-              dnsSocket.close();
-            }
-          } catch (IOException e) {
-            Log.w("Failed to close DNS socket ", e);
-          }
+          closeSocket(dnsSocket);
         }
       } finally {
         if (udpSocket != null) {
@@ -260,6 +256,19 @@ public class DnsResolverService extends Service {
         Log.d(LOG_TAG, "Failed to send UDP payload ", e);
       }
       return false;
+    }
+
+    // Utility method to close a socket.
+    private void closeSocket(Socket socket) {
+      try {
+        if (socket != null && !socket.isClosed()) {
+          socket.close();
+        }
+      } catch (IOException e) {
+        Log.w("Failed to close socket ", e);
+      } finally {
+        socket = null;
+      }
     }
 
     private void broadcastUdpSocketAddress() {
