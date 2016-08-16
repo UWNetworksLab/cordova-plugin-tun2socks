@@ -1,6 +1,12 @@
 apply plugin: 'com.android.application'
 
 android {
+    repositories {
+        maven {
+            url "https://dl.bintray.com/albertolalama/maven"
+        }
+    }
+
     sourceSets {
         main {
             jniLibs.srcDirs = ["libs"]
@@ -31,5 +37,6 @@ android {
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar', '*.so'])
     compile 'com.android.support:appcompat-v7:23.4.0'
+    compile 'org.uproxy.jsocks:jsocks:1.0.1'
 }
 
