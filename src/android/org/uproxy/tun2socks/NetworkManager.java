@@ -19,6 +19,7 @@ import android.util.Log;
 public class NetworkManager {
 
     private static final String LOG_TAG = "NetworkManager";
+    private static final String EXTRA_NETWORK_INFO = "networkInfo";
 
     ConnectivityManager m_connectivityManager;
     BroadcastReceiver m_broadcastReceiver;
@@ -90,16 +91,9 @@ public class NetworkManager {
     // Handles changes in connectivity by binding the process to the latest
     // connected network.
     private void connectivityChanged(Intent intent) {
-      NetworkInfo activeNetworkInfo = m_connectivityManager.getActiveNetworkInfo();
-      Log.d(LOG_TAG, "ACTIVE NETWORK " + ((activeNetworkInfo != null) ? activeNetworkInfo.toString() : "null" ));
-      NetworkInfo boundNetworkInfo = m_connectivityManager.getNetworkInfo(m_connectivityManager.getBoundNetworkForProcess());
-      Log.d(LOG_TAG, "BOUND NETWORK " + ((boundNetworkInfo != null) ? boundNetworkInfo.toString() : "null"));
-      NetworkInfo networkInfo = intent.getParcelableExtra("networkInfo");
-      if (networkInfo == null) {
-        Log.w(LOG_TAG, "No network info received in connectivity broadcast.");
-      } else {
-        Log.d(LOG_TAG, "INTENT NETWORK " + networkInfo.toString());
-      }
+      Log.d(LOG_TAG, "ACTIVE NETWORK " + m_connectivityManager.getActiveNetworkInfo());
+      Log.d(LOG_TAG, "BOUND NETWORK " + m_connectivityManager.getNetworkInfo(m_connectivityManager.getBoundNetworkForProcess()));
+      Log.d(LOG_TAG, "INTENT NETWORK " + intent.getParcelableExtra(EXTRA_NETWORK_INFO));
 
       bindProcessToActiveNetwork();
    }
