@@ -69,7 +69,8 @@ LOCAL_SRC_FILES := \
         base/BPending.c \
         flowextra/PacketPassInactivityMonitor.c \
         tun2socks/SocksUdpGwClient.c \
-        udpgw_client/UdpGwClient.c
+        udpgw_client/UdpGwClient.c \
+        stringmap/BStringMap.c
 
 include $(BUILD_SHARED_LIBRARY)
 
