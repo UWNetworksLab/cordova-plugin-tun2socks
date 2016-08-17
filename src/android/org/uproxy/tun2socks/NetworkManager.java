@@ -47,14 +47,15 @@ public class NetworkManager {
 
     // Destroys the network receiver.
     public void destroy() {
-      if (m_broadcastReceiver != null) {
-        try {
-          m_applicationContext.unregisterReceiver(m_broadcastReceiver);
-        } catch (Exception e) {
-          Log.e(LOG_TAG, "Error unregistering network receiver: " + e.getMessage(), e);
-        } finally {
-          m_broadcastReceiver = null;
-        }
+      if (m_broadcastReceiver == null) {
+        return;
+      }
+      try {
+        m_applicationContext.unregisterReceiver(m_broadcastReceiver);
+      } catch (Exception e) {
+        Log.e(LOG_TAG, "Error unregistering network receiver: " + e.getMessage(), e);
+      } finally {
+        m_broadcastReceiver = null;
       }
     }
 
@@ -136,13 +137,15 @@ public class NetworkManager {
         return networks.get(ConnectivityManager.TYPE_WIMAX);
       } else if (networks.containsKey(ConnectivityManager.TYPE_MOBILE)) {
         return networks.get(ConnectivityManager.TYPE_MOBILE);
+      } else if (networks.containsKey(ConnectivityManager.TYPE_MOBILE_DUN)) {
+        return networks.get(ConnectivityManager.TYPE_MOBILE_DUN);
       }
       return null;
    }
 
    // Returns true if the supplied network is connected, available, and not
    // a VPN.
-   private boolean isConnectedNonVpnNetwork(NetworkInfo networkInfo) {
+   private static boolean isConnectedNonVpnNetwork(NetworkInfo networkInfo) {
       if (networkInfo == null) {
         return false;
       }
