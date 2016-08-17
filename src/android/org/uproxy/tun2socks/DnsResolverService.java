@@ -88,7 +88,8 @@ public class DnsResolverService extends Service {
   private class DnsUdpToSocksResolver extends Thread {
     private static final String LOG_TAG = "DnsUdpToSocksResolver";
     private static final String DNS_RESOLVER_IP = "8.8.8.8";
-    private static final int MAX_UDP_DATAGRAM_LEN = 32767; // DNS max over UDP
+    // Google's DNS theoretical max response length is 64K.
+    private static final int MAX_UDP_DATAGRAM_LEN = 65535;
     private static final int DEFAULT_DNS_PORT = 53;
 
     // DNS bit masks

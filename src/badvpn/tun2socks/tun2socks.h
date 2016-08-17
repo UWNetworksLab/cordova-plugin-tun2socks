@@ -45,8 +45,8 @@
 // option to override the destination addresses to give the SOCKS server
 //#define OVERRIDE_DEST_ADDR "10.111.0.2:2000"
 
-// maximum number of bytes for udp send/recv
- #define UDP_MAX_DATAGRAM_BYTES 32767
+// maximum limit for UDP packet length
+ #define UDP_MAX_DATAGRAM_BYTES 65535
 
 // port for dns traffic
  #define UDP_DNS_PORT 53

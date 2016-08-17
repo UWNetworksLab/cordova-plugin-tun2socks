@@ -2,9 +2,7 @@ apply plugin: 'com.android.application'
 
 android {
     repositories {
-        maven {
-            url "https://dl.bintray.com/albertolalama/maven"
-        }
+        jcenter()
     }
 
     sourceSets {

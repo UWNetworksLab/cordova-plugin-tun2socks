@@ -1417,7 +1417,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             // if transparent DNS is enabled, any packet arriving at out netif
             // address to port 53 is considered a DNS packet
             is_dns = (options.transparent_dns &&
-                      // ipv4_header.destination_address == netif_ipaddr.ipv4 &&
+                      ipv4_header.destination_address == netif_ipaddr.ipv4 &&
                       udp_header.dest_port == hton16(UDP_DNS_PORT));
         } break;
 
