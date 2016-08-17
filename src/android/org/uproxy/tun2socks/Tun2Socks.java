@@ -31,6 +31,7 @@ public class Tun2Socks extends CordovaPlugin {
 
   private String m_socksServerAddress;
   private CallbackContext m_onDisconnectCallback = null;
+  private NetworkManager m_networkManager = null;
 
   @Override
   public boolean execute(String action, JSONArray args, CallbackContext callbackContext)
@@ -62,18 +63,11 @@ public class Tun2Socks extends CordovaPlugin {
   }
 
   // Initializes the plugin.
-  // Requires API 23 (Marshmallow) to call bindProcessToNetwork.
+  // Requires API 23 (Marshmallow) to use the NetworkManager.
   @TargetApi(Build.VERSION_CODES.M)
   @Override
   protected void pluginInitialize() {
-    // Bind process to network before establishing VPN.
-    ConnectivityManager cm =
-        (ConnectivityManager)
-            this.cordova.getActivity().getSystemService(Context.CONNECTIVITY_SERVICE);
-    if (!cm.bindProcessToNetwork(cm.getActiveNetwork())) {
-      Log.e(LOG_TAG, "Failed to bind process to network.");
-      return;
-    }
+    m_networkManager = new NetworkManager(getBaseContext());
 
     LocalBroadcastManager.getInstance(getBaseContext())
         .registerReceiver(
@@ -83,6 +77,10 @@ public class Tun2Socks extends CordovaPlugin {
 
   @Override
   public void onDestroy() {
+    // Stop network manager
+    if (m_networkManager != null) {
+      m_networkManager.destroy();
+    }
     // Stop tunnel service in case the user has quit the app without
     // disconnecting the VPN.
     stopTunnelService();
