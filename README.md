@@ -24,6 +24,10 @@ Stops the VPN service.
 
 Sets a success callback on the returned promise, to be called if the VPN service gets revoked or disconnected.
 
+`deviceSupportsPlugin(): Promise<Boolean>;`
+
+Retruns true if the device runs the minimum required version for the plugin to function properly.
+
 ### Code Sources
 
 We re-use and have used as a starting point open source code from [Psiphon](https://psiphon.ca/uz@Latn/open-source.html), specifically https://github.com/mei3am/ps.
