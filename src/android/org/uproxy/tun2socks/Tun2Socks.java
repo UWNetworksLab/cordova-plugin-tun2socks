@@ -36,6 +36,11 @@ public class Tun2Socks extends CordovaPlugin {
   @Override
   public boolean execute(String action, JSONArray args, CallbackContext callbackContext)
       throws JSONException {
+    if (!hasVpnService()) {
+      callbackContext.error("Device does not support plugin.");
+      return false;
+    }
+
     if (action.equals(START_ACTION)) {
       if (args.length() < 1) {
         callbackContext.error("Missing socks server address argument");
@@ -67,6 +72,10 @@ public class Tun2Socks extends CordovaPlugin {
   @TargetApi(Build.VERSION_CODES.M)
   @Override
   protected void pluginInitialize() {
+    if (!hasVpnService()) {
+      Log.i(LOG_TAG, "Device does not support plugin.");
+      return;
+    }
     m_networkManager = new NetworkManager(getBaseContext());
 
     LocalBroadcastManager.getInstance(getBaseContext())
