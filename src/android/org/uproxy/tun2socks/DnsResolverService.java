@@ -35,7 +35,7 @@ public class DnsResolverService extends Service {
 
   private final IBinder binder = new LocalBinder();
   private String m_socksServerAddress;
-  private DnsUdpToSocksResolver dnsResolver = null;
+  private DnsUdpToSocksResolver m_dnsResolver = null;
 
   public class LocalBinder extends Binder {
     public DnsResolverService getService() {
@@ -54,22 +54,19 @@ public class DnsResolverService extends Service {
     m_socksServerAddress = intent.getStringExtra(SOCKS_SERVER_ADDRESS_EXTRA);
     if (m_socksServerAddress == null) {
       Log.e(LOG_TAG, "Failed to receive socks server address.");
+      return START_NOT_STICKY;
     }
-    return START_NOT_STICKY;
-  }
+    m_dnsResolver = new DnsUdpToSocksResolver(DnsResolverService.this);
+    m_dnsResolver.start();
 
-  @Override
-  public void onCreate() {
-    Log.i(LOG_TAG, "create");
-    dnsResolver = new DnsUdpToSocksResolver(DnsResolverService.this);
-    dnsResolver.start();
+    return START_NOT_STICKY;
   }
 
   @Override
   public void onDestroy() {
     Log.i(LOG_TAG, "destroy");
-    if (dnsResolver != null) {
-      dnsResolver.interrupt();
+    if (m_dnsResolver != null) {
+      m_dnsResolver.interrupt();
     }
   }
 
