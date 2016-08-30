@@ -15,8 +15,8 @@ public class Tun2SocksJni {
   // udpgw server.
   //
   // The tun device file descriptor should be set to non-blocking mode.
-  // tun2Socks takes ownership of the tun device file descriptor and will close
-  // it when tun2socks is stopped.
+  // tun2Socks does *not* take ownership of the tun device file descriptor; the
+  // caller is responsible for closing it after tun2socks terminates.
   //
   // runTun2Socks blocks until tun2socks is stopped by calling terminateTun2Socks.
   // It's safe to call terminateTun2Socks from a different thread.

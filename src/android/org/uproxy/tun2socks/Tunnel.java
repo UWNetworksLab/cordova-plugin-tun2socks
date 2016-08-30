@@ -107,6 +107,12 @@ public class Tunnel {
     return routeThroughTunnel(socksServerAddress, dnsServerAddress);
   }
 
+  // Stops routing traffic through the tunnel by stopping tun2socks.
+  // The VPN is unaffected by this method.
+  public synchronized void stopTunneling() {
+    stopRoutingThroughTunnel();
+  }
+
   // Note: to avoid deadlock, do not call directly from a HostService callback;
   // instead post to a Handler if necessary to trigger from a HostService callback.
   public synchronized void stop() {
@@ -174,7 +180,7 @@ public class Tunnel {
     if (!mRoutingThroughTunnel.compareAndSet(false, true)) {
       return false;
     }
-    ParcelFileDescriptor tunFd = mTunFd.getAndSet(null);
+    ParcelFileDescriptor tunFd = mTunFd.get();
     if (tunFd == null) {
       return false;
     }
@@ -196,6 +202,11 @@ public class Tunnel {
     return true;
   }
 
+  private void stopRoutingThroughTunnel() {
+    stopTun2Socks();
+    mRoutingThroughTunnel.set(false);
+  }
+
   @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
   public void protectSocket(long fileDescriptor) {
     if (!((VpnService) mHostService.getVpnService()).protect((int) fileDescriptor)) {
@@ -208,11 +219,11 @@ public class Tunnel {
     ParcelFileDescriptor tunFd = mTunFd.getAndSet(null);
     if (tunFd != null) {
       try {
+        mHostService.onDiagnosticMessage("closing VPN interface");
         tunFd.close();
       } catch (IOException e) {
       }
     }
-    mRoutingThroughTunnel.set(false);
   }
 
   //----------------------------------------------------------------------------
@@ -237,7 +248,7 @@ public class Tunnel {
               @Override
               public void run() {
                 Tun2SocksJni.runTun2Socks(
-                    vpnInterfaceFileDescriptor.detachFd(),
+                    vpnInterfaceFileDescriptor.getFd(),
                     vpnInterfaceMTU,
                     vpnIpAddress,
                     vpnNetMask,
@@ -259,6 +270,7 @@ public class Tunnel {
         Thread.currentThread().interrupt();
       }
       mTun2SocksThread = null;
+      mRoutingThroughTunnel.set(false);
       mHostService.onDiagnosticMessage("tun2socks stopped");
     }
   }

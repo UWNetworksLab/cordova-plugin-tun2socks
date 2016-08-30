@@ -41,17 +41,17 @@ public class TunnelManager implements Tunnel.HostService {
   public static final String SOCKS_SERVER_ADDRESS_EXTRA = "socksServerAddress";
 
   private Service m_parentService = null;
-  private boolean m_firstStart = true;
-  private boolean m_signalledStop = false;
   private CountDownLatch m_tunnelThreadStopSignal;
   private Thread m_tunnelThread;
   private AtomicBoolean m_isStopping;
   private Tunnel m_tunnel = null;
   private String m_socksServerAddress;
+  private AtomicBoolean m_isReconnecting;
 
   public TunnelManager(Service parentService) {
     m_parentService = parentService;
     m_isStopping = new AtomicBoolean(false);
+    m_isReconnecting = new AtomicBoolean(false);
     m_tunnel = Tunnel.newTunnel(this);
   }
 
@@ -108,30 +108,40 @@ public class TunnelManager implements Tunnel.HostService {
   // 1. VpnService doesn't respond to stopService calls
   // 2. The UI will not block while waiting for stopService to return
   public void signalStopService() {
-    m_signalledStop = true;
     if (m_tunnelThreadStopSignal != null) {
       m_tunnelThreadStopSignal.countDown();
     }
   }
 
-  public boolean signalledStop() {
-    return m_signalledStop;
+  // Stops the tunnel thread and restarts it with |socksServerAddress|.
+  public void restartTunnel(final String socksServerAddress) {
+    Log.i(LOG_TAG, "Restarting tunnel.");
+    if (socksServerAddress == null ||
+        socksServerAddress.equals(m_socksServerAddress)) {
+      // Don't reconnect if the socks server address hasn't changed.
+      return;
+    }
+    m_socksServerAddress = socksServerAddress;
+    m_isReconnecting.set(true);
+
+    // Signaling stop to the tunnel thread with the reconnect flag set causes
+    // the thread to stop the tunnel (but not the VPN or the service) and send
+    // the new SOCKS server address to the DNS resolver before exiting itself.
+    // When the DNS broadcasts its local address, the tunnel will restart.
+    signalStopService();
   }
 
   private void startTunnel(final String dnsResolverAddress) {
-    if (m_firstStart) {
-      m_firstStart = false;
-      m_tunnelThreadStopSignal = new CountDownLatch(1);
-      m_tunnelThread =
-          new Thread(
-              new Runnable() {
-                @Override
-                public void run() {
-                  runTunnel(m_socksServerAddress, dnsResolverAddress);
-                }
-              });
-      m_tunnelThread.start();
-    }
+    m_tunnelThreadStopSignal = new CountDownLatch(1);
+    m_tunnelThread =
+        new Thread(
+            new Runnable() {
+              @Override
+              public void run() {
+                runTunnel(m_socksServerAddress, dnsResolverAddress);
+              }
+            });
+    m_tunnelThread.start();
   }
 
   private void runTunnel(String socksServerAddress, String dnsResolverAddress) {
@@ -154,12 +164,20 @@ public class TunnelManager implements Tunnel.HostService {
     } catch (Tunnel.Exception e) {
       Log.e(LOG_TAG, String.format("Start tunnel failed: %s", e.getMessage()));
     } finally {
-      Log.i(LOG_TAG, "Stopping tunnel...");
-      m_tunnel.stop();
-
-      // Stop service
-      m_parentService.stopForeground(true);
-      m_parentService.stopSelf();
+      if (m_isReconnecting.get()) {
+        // Stop tunneling only, not VPN, if reconnecting.
+        Log.i(LOG_TAG, "Stopping tunnel.");
+        m_tunnel.stopTunneling();
+        // Start the DNS resolver service with the new SOCKS server address.
+        startDnsResolverService();
+      } else {
+        // Stop VPN tunnel and service only if not reconnecting.
+        Log.i(LOG_TAG, "Stopping VPN and tunnel.");
+        m_tunnel.stop();
+        m_parentService.stopForeground(true);
+        m_parentService.stopSelf();
+      }
+      m_isReconnecting.set(false);
     }
   }
 
@@ -201,6 +219,10 @@ public class TunnelManager implements Tunnel.HostService {
   @TargetApi(Build.VERSION_CODES.M)
   public void onVpnEstablished() {
     Log.i(LOG_TAG, "VPN established.");
+    startDnsResolverService();
+  }
+
+  private void startDnsResolverService() {
     Intent dnsResolverStart = new Intent(m_parentService, DnsResolverService.class);
     dnsResolverStart.putExtra(SOCKS_SERVER_ADDRESS_EXTRA, m_socksServerAddress);
     m_parentService.startService(dnsResolverStart);

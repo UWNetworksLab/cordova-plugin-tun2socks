@@ -68,6 +68,7 @@ public class TunnelVpnService extends VpnService {
 
   @Override
   public void onDestroy() {
+    Log.d(LOG_TAG, "on destroy");
     TunnelState.getTunnelState().setTunnelManager(null);
     m_tunnelManager.onDestroy();
   }

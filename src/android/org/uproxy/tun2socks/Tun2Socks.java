@@ -140,6 +140,10 @@ public class Tun2Socks extends CordovaPlugin {
     Log.i(LOG_TAG, "starting tunnel service");
     if (isServiceRunning()) {
       Log.w(LOG_TAG, "already running service");
+      TunnelManager tunnelManager = TunnelState.getTunnelState().getTunnelManager();
+      if (tunnelManager != null) {
+        tunnelManager.restartTunnel(m_socksServerAddress);
+      }
       return;
     }
     Intent startTunnelVpn = new Intent(context, TunnelVpnService.class);
