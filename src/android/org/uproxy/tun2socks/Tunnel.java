@@ -21,6 +21,7 @@ package org.uproxy.tun2socks;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -131,7 +132,7 @@ public class Tunnel {
   // synchronized functions as stop() is synchronized and a deadlock is possible as callbacks
   // can be called while stop holds the lock.
   //
-  // Calling allowBypass on VPNService.Builder requires API 21 (Lollipop).
+  // Calling addDisallowedApplication on VPNService.Builder requires API 21 (Lollipop).
   @TargetApi(Build.VERSION_CODES.LOLLIPOP)
   private boolean startVpn() throws Exception {
     mPrivateAddress = selectPrivateAddress();
@@ -143,16 +144,22 @@ public class Tunnel {
       // Workaround for https://code.google.com/p/android/issues/detail?id=61096
       Locale.setDefault(new Locale("en"));
 
-      ParcelFileDescriptor tunFd =
-          ((VpnService.Builder) mHostService.newVpnServiceBuilder())
-              .setSession(mHostService.getAppName())
-              .setMtu(VPN_INTERFACE_MTU)
-              .addAddress(mPrivateAddress.mIpAddress, mPrivateAddress.mPrefixLength)
-              .addRoute("0.0.0.0", 0)
-              .addRoute(mPrivateAddress.mSubnet, mPrivateAddress.mPrefixLength)
-              .addDnsServer(mPrivateAddress.mRouter)
-              .allowBypass()
-              .establish();
+      ParcelFileDescriptor tunFd = null;
+      try {
+        tunFd =
+            ((VpnService.Builder) mHostService.newVpnServiceBuilder())
+                .setSession(mHostService.getAppName())
+                .setMtu(VPN_INTERFACE_MTU)
+                .addAddress(mPrivateAddress.mIpAddress, mPrivateAddress.mPrefixLength)
+                .addRoute("0.0.0.0", 0)
+                .addDnsServer(mPrivateAddress.mRouter)
+                .addDisallowedApplication(mHostService.getContext().getPackageName())
+                .establish();
+      } catch (NameNotFoundException e) {
+        mHostService.onDiagnosticMessage(
+            "failed exclude app from VPN: " + e.getMessage());
+      }
+
       if (tunFd == null) {
         // As per http://developer.android.com/reference/android/net/VpnService.Builder.html#establish%28%29,
         // this application is no longer prepared or was revoked.

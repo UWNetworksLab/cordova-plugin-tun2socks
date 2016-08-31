@@ -8,7 +8,7 @@ To handle DNS resoution, we have implemented a local DNS resolver that intercept
 
 ### Target Devices
 
-This plugin targets Android devices running Marshmellow (API 23), or higher. This requirement stems from calling `bindProcessToNetwork`, a [connectivity API](https://developer.android.com/reference/android/net/ConnectivityManager.html#bindProcessToNetwork(android.net.Network)) introduced in version 23, which allows the client application traffic to bypass the VPN.
+This plugin targets Android devices running Lollipop (API 21), or higher. This requirement stems from calling `addDisallowedApplication`, a [VPNService.Builder API](https://developer.android.com/reference/android/net/VpnService.Builder.html#addDisallowedApplication(java.lang.String)) introduced in version 21, which allows the specified application's traffic to bypass the VPN.
 
 ### Javascript API
 
