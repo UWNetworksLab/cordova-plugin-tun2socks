@@ -204,7 +204,6 @@ public class Tunnel {
 
   private void stopRoutingThroughTunnel() {
     stopTun2Socks();
-    mRoutingThroughTunnel.set(false);
   }
 
   @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
