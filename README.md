@@ -15,6 +15,7 @@ This plugin targets Android devices running Marshmellow (API 23), or higher. Thi
 `start(socksServerAddress:string) : Promise<string>;`
 
 Starts the VPN service, and tunnels all the traffic to the SOCKS5 server at `socksServerAddress`.
+Restarts tunneling while preserving the VPN connection if called when the plugin is already running.
 
 `stop(): Promise<string>;`
 

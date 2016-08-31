@@ -56,6 +56,10 @@ public class DnsResolverService extends Service {
       Log.e(LOG_TAG, "Failed to receive socks server address.");
       return START_NOT_STICKY;
     }
+
+    if (m_dnsResolver != null) {
+      m_dnsResolver.interrupt();  // Stop resolver to handle reconnect.
+    }
     m_dnsResolver = new DnsUdpToSocksResolver(DnsResolverService.this);
     m_dnsResolver.start();
 
@@ -169,6 +173,7 @@ public class DnsResolverService extends Service {
             e.printStackTrace();
             continue;
           }
+
           if (!writeUdpPacketToStream(dnsOutputStream, udpPacket)) {
             continue;
           }

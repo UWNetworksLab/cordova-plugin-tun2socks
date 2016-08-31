@@ -298,7 +298,7 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
     dns_get_header_id_str(dns_id_str, udp_pcb->udp_recv_buffer);
     const char* local_addr_str = BStringMap_Get(&udp_pcb->map, dns_id_str);
     if (!local_addr_str) {
-        BLog(BLOG_ERROR, "udp_fd_handler: no address for dns reqeust id %s",
+        BLog(BLOG_ERROR, "udp_fd_handler: no address for DNS request id %s",
              dns_id_str);
         return;
     }

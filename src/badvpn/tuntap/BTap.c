@@ -488,7 +488,10 @@ int BTap_InitWithFD (BTap *o, BReactor *reactor, int fd, int mtu, BTap_handler_e
     o->handler_error_user = handler_error_user;
     o->frame_mtu = mtu;
     o->fd = fd;
-    o->close_fd = 1;
+    // ===== UPROXY =====
+    // Do not take ownership or close the TUN file descriptor
+    o->close_fd = 0;
+    // ===== /UPROXY =====
 
     // TODO: use BTap_Init2? Still some different behavior (we don't want the fcntl block; we do want close to be called)
 
