@@ -31,7 +31,6 @@ public class Tun2Socks extends CordovaPlugin {
 
   private String m_socksServerAddress;
   private CallbackContext m_onDisconnectCallback = null;
-  private NetworkManager m_networkManager = null;
 
   @Override
   public boolean execute(String action, JSONArray args, CallbackContext callbackContext)
@@ -68,15 +67,14 @@ public class Tun2Socks extends CordovaPlugin {
   }
 
   // Initializes the plugin.
-  // Requires API 23 (Marshmallow) to use the NetworkManager.
-  @TargetApi(Build.VERSION_CODES.M)
+  // Requires API 21 (Lollipop) for the application traffic to bypass the VPN.
+  @TargetApi(Build.VERSION_CODES.LOLLIPOP)
   @Override
   protected void pluginInitialize() {
     if (!hasVpnService()) {
       Log.i(LOG_TAG, "Device does not support plugin.");
       return;
     }
-    m_networkManager = new NetworkManager(getBaseContext());
 
     LocalBroadcastManager.getInstance(getBaseContext())
         .registerReceiver(
@@ -86,10 +84,6 @@ public class Tun2Socks extends CordovaPlugin {
 
   @Override
   public void onDestroy() {
-    // Stop network manager
-    if (m_networkManager != null) {
-      m_networkManager.destroy();
-    }
     // Stop tunnel service in case the user has quit the app without
     // disconnecting the VPN.
     stopTunnelService();
@@ -110,7 +104,7 @@ public class Tun2Socks extends CordovaPlugin {
 
   // Returns whether the device supports the tunnel VPN service.
   private boolean hasVpnService() {
-    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
   }
 
   @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
