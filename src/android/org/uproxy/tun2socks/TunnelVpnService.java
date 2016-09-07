@@ -34,6 +34,10 @@ public class TunnelVpnService extends VpnService {
   private static final String LOG_TAG = "TunnelVpnService";
   public static final String TUNNEL_VPN_DISCONNECT_BROADCAST =
       "tunnelVpnDisconnectBroadcast";
+  public static final String TUNNEL_VPN_START_BROADCAST =
+      "tunnelVpnStartBroadcast";
+  public static final String TUNNEL_VPN_START_SUCCESS_EXTRA =
+      "tunnelVpnStartSuccessExtra";
 
   private TunnelManager m_tunnelManager = new TunnelManager(this);
 
@@ -85,9 +89,21 @@ public class TunnelVpnService extends VpnService {
     return new VpnService.Builder();
   }
 
-  private void broadcastVpnDisconnect() {
-    Intent disconnectBroadcast = new Intent(TUNNEL_VPN_DISCONNECT_BROADCAST);
+  // Broadcast non-user-initiated VPN disconnect.
+  public void broadcastVpnDisconnect() {
+    dispatchBroadcast(new Intent(TUNNEL_VPN_DISCONNECT_BROADCAST));
+  }
+
+  // Broadcast VPN start. |success| is true if the VPN and tunnel were started
+  // successfully, and false otherwise.
+  public void broadcastVpnStart(boolean success) {
+    Intent vpnStart = new Intent(TUNNEL_VPN_START_BROADCAST);
+    vpnStart.putExtra(TUNNEL_VPN_START_SUCCESS_EXTRA, success);
+    dispatchBroadcast(vpnStart);
+  }
+
+  private void dispatchBroadcast(final Intent broadcast) {
     LocalBroadcastManager.getInstance(TunnelVpnService.this)
-        .sendBroadcast(disconnectBroadcast);
+        .sendBroadcast(broadcast);
   }
 }
