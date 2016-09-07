@@ -40,7 +40,7 @@ public class TunnelManager implements Tunnel.HostService {
   private static final String LOG_TAG = "TunnelManager";
   public static final String SOCKS_SERVER_ADDRESS_EXTRA = "socksServerAddress";
 
-  private Service m_parentService = null;
+  private TunnelVpnService m_parentService = null;
   private CountDownLatch m_tunnelThreadStopSignal;
   private Thread m_tunnelThread;
   private AtomicBoolean m_isStopping;
@@ -48,7 +48,7 @@ public class TunnelManager implements Tunnel.HostService {
   private String m_socksServerAddress;
   private AtomicBoolean m_isReconnecting;
 
-  public TunnelManager(Service parentService) {
+  public TunnelManager(TunnelVpnService parentService) {
     m_parentService = parentService;
     m_isStopping = new AtomicBoolean(false);
     m_isReconnecting = new AtomicBoolean(false);
@@ -65,15 +65,18 @@ public class TunnelManager implements Tunnel.HostService {
     m_socksServerAddress = intent.getStringExtra(SOCKS_SERVER_ADDRESS_EXTRA);
     if (m_socksServerAddress == null) {
       Log.e(LOG_TAG, "Failed to receive the socks server address.");
+      m_parentService.broadcastVpnStart(false /* success */);
       return 0;
     }
 
     try {
       if (!m_tunnel.startRouting()) {
         Log.e(LOG_TAG, "Failed to establish VPN");
+        m_parentService.broadcastVpnStart(false /* success */);
       }
     } catch (Tunnel.Exception e) {
       Log.e(LOG_TAG, String.format("Failed to establish VPN: %s", e.getMessage()));
+      m_parentService.broadcastVpnStart(false /* success */);
     }
     return android.app.Service.START_NOT_STICKY;
   }
@@ -119,6 +122,7 @@ public class TunnelManager implements Tunnel.HostService {
     if (socksServerAddress == null ||
         socksServerAddress.equals(m_socksServerAddress)) {
       // Don't reconnect if the socks server address hasn't changed.
+      m_parentService.broadcastVpnStart(true /* success */);
       return;
     }
     m_socksServerAddress = socksServerAddress;
@@ -152,6 +156,7 @@ public class TunnelManager implements Tunnel.HostService {
         throw new Tunnel.Exception("application is not prepared or revoked");
       }
       Log.i(LOG_TAG, "VPN service running");
+      m_parentService.broadcastVpnStart(true /* success */);
 
       try {
         m_tunnelThreadStopSignal.await();
@@ -163,6 +168,7 @@ public class TunnelManager implements Tunnel.HostService {
 
     } catch (Tunnel.Exception e) {
       Log.e(LOG_TAG, String.format("Start tunnel failed: %s", e.getMessage()));
+      m_parentService.broadcastVpnStart(false /* success */);
     } finally {
       if (m_isReconnecting.get()) {
         // Stop tunneling only, not VPN, if reconnecting.

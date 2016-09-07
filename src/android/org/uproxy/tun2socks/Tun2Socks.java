@@ -30,6 +30,7 @@ public class Tun2Socks extends CordovaPlugin {
   public static final int RESULT_OK = -1;
 
   private String m_socksServerAddress;
+  private CallbackContext m_onStartCallback = null;
   private CallbackContext m_onDisconnectCallback = null;
 
   @Override
@@ -48,7 +49,8 @@ public class Tun2Socks extends CordovaPlugin {
         // from onActivityResult.
         m_socksServerAddress = args.getString(0);
         Log.i(LOG_TAG, "Got socks server address: " + m_socksServerAddress);
-        prepareAndStartTunnelService(callbackContext);
+        m_onStartCallback = callbackContext;
+        prepareAndStartTunnelService();
       }
       return true;
     } else if (action.equals(STOP_ACTION)) {
@@ -76,10 +78,12 @@ public class Tun2Socks extends CordovaPlugin {
       return;
     }
 
+    IntentFilter broadcastFilter =
+        new IntentFilter(TunnelVpnService.TUNNEL_VPN_DISCONNECT_BROADCAST);
+    broadcastFilter.addAction(TunnelVpnService.TUNNEL_VPN_START_BROADCAST);
+
     LocalBroadcastManager.getInstance(getBaseContext())
-        .registerReceiver(
-            m_disconnectBroadcastReceiver,
-            new IntentFilter(TunnelVpnService.TUNNEL_VPN_DISCONNECT_BROADCAST));
+        .registerReceiver(m_vpnTunnelBroadcastReceiver, broadcastFilter);
   }
 
   @Override
@@ -89,16 +93,15 @@ public class Tun2Socks extends CordovaPlugin {
     stopTunnelService();
   }
 
-  protected void prepareAndStartTunnelService(CallbackContext callbackContext) {
+  protected void prepareAndStartTunnelService() {
     Log.d(LOG_TAG, "Starting tun2socks...");
     if (hasVpnService()) {
       if (prepareVpnService()) {
         startTunnelService(getBaseContext());
       }
-      callbackContext.success("Started tun2socks");
     } else {
       Log.e(LOG_TAG, "Device does not support whole device VPN mode.");
-      callbackContext.error("Failed to start tun2socks");
+      m_onStartCallback.error("Failed to start tun2socks");
     }
   }
 
@@ -127,13 +130,16 @@ public class Tun2Socks extends CordovaPlugin {
   public void onActivityResult(int request, int result, Intent data) {
     if (request == REQUEST_CODE_PREPARE_VPN && result == RESULT_OK) {
       startTunnelService(getBaseContext());
+    } else {
+      Log.e(LOG_TAG, "failed to prepare VPN");
+      m_onStartCallback.error("Failed to start tun2socks");
     }
   }
 
   protected void startTunnelService(Context context) {
     Log.i(LOG_TAG, "starting tunnel service");
     if (isServiceRunning()) {
-      Log.w(LOG_TAG, "already running service");
+      Log.d(LOG_TAG, "already running service");
       TunnelManager tunnelManager = TunnelState.getTunnelState().getTunnelManager();
       if (tunnelManager != null) {
         tunnelManager.restartTunnel(m_socksServerAddress);
@@ -172,6 +178,19 @@ public class Tun2Socks extends CordovaPlugin {
     return this.cordova.getActivity().getApplicationContext();
   }
 
+  public void onStartVpn(boolean success) {
+    if (m_onStartCallback == null || m_onStartCallback.isFinished()) {
+      Log.e(LOG_TAG, "failed to call on start callback");
+      return;
+    }
+
+    if (success) {
+      m_onStartCallback.success("Started tun2socks");
+    } else {
+      m_onStartCallback.error("Failed to start tun2socks");
+    }
+  }
+
   public void onDisconnect() {
     if (m_onDisconnectCallback != null) {
       PluginResult result = new PluginResult(PluginResult.Status.OK);
@@ -180,20 +199,27 @@ public class Tun2Socks extends CordovaPlugin {
     }
   }
 
-  private DisconnectBroadcastReceiver m_disconnectBroadcastReceiver =
-      new DisconnectBroadcastReceiver(Tun2Socks.this);
+  private VpnTunnelBroadcastReceiver m_vpnTunnelBroadcastReceiver =
+      new VpnTunnelBroadcastReceiver(Tun2Socks.this);
 
-  private class DisconnectBroadcastReceiver extends BroadcastReceiver {
+  private class VpnTunnelBroadcastReceiver extends BroadcastReceiver {
     private Tun2Socks m_handler;
 
-    public DisconnectBroadcastReceiver(Tun2Socks handler) {
+    public VpnTunnelBroadcastReceiver(Tun2Socks handler) {
       m_handler = handler;
     }
 
     @Override
     public void onReceive(Context context, Intent intent) {
-      // Callback into handler so we can communicate the disconnect event to js.
-      m_handler.onDisconnect();
+      final String action = intent.getAction();
+      if (TunnelVpnService.TUNNEL_VPN_START_BROADCAST.equals(action)) {
+        boolean startSuccess = intent.getBooleanExtra(
+            TunnelVpnService.TUNNEL_VPN_START_SUCCESS_EXTRA, true);
+        m_handler.onStartVpn(startSuccess);
+
+      } else if (TunnelVpnService.TUNNEL_VPN_DISCONNECT_BROADCAST.equals(action)) {
+        m_handler.onDisconnect();
+      }
     }
   };
 }
