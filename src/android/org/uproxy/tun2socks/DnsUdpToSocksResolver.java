@@ -18,7 +18,10 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 
 import socks.Socks5Proxy;
 import socks.SocksSocket;
@@ -45,15 +48,22 @@ public class DnsUdpToSocksResolver extends Thread {
   private static final int NSCOUNT_OFFSET = 8;
   private static final int ARCOUNT_OFFSET = 10;
 
+  // Threading constants
+  private static final int N_WORKERS = 10;
+
   private volatile DatagramSocket m_udpSocket = null;
   private DnsResolverService m_parentService;
+  private ThreadPoolExecutor m_executorService;
 
   public DnsUdpToSocksResolver(DnsResolverService parentService) {
     m_parentService = parentService;
+    m_executorService = (ThreadPoolExecutor)Executors.newFixedThreadPool(N_WORKERS);
   }
 
   public void run() {
     byte[] udpBuffer = new byte[MAX_BUFFER_SIZE];
+    DatagramPacket udpPacket = new DatagramPacket(udpBuffer, udpBuffer.length);
+
     InetSocketAddress socksServerAddress =
         m_parentService.getSocksServerAddress();
     if (socksServerAddress == null) {
@@ -76,9 +86,8 @@ public class DnsUdpToSocksResolver extends Thread {
 
     try {
       while (!isInterrupted()) {
-        Log.i(LOG_TAG, "listening on " + m_udpSocket.getLocalSocketAddress().toString());
+        Log.d(LOG_TAG, "listening on " + m_udpSocket.getLocalSocketAddress().toString());
 
-        DatagramPacket udpPacket = new DatagramPacket(udpBuffer, udpBuffer.length);
         try {
           m_udpSocket.receive(udpPacket);
         } catch (SocketTimeoutException e) {
@@ -95,124 +104,172 @@ public class DnsUdpToSocksResolver extends Thread {
                 udpPacket.getLength(),
                 udpPacket.getAddress().toString(),
                 udpPacket.getPort(),
-                new String(udpBuffer, 0, udpPacket.getLength())));
+                new String(udpPacket.getData(), 0, udpPacket.getLength())));
 
-        if (!isValidDnsRequest(udpPacket)) {
-          Log.i(LOG_TAG, "Not a DNS request.");
+        // Copy the UDP packet and its underlying buffer data.
+        DatagramPacket workerUdpPacket;
+        int packetLength = udpPacket.getLength();
+        byte[] workerBuffer = new byte[packetLength];
+        System.arraycopy(udpPacket.getData(), 0, workerBuffer, 0, packetLength);
+         try {
+            workerUdpPacket = new DatagramPacket(
+                workerBuffer, packetLength, udpPacket.getSocketAddress());
+        } catch (SocketException e) {
+          Log.e(LOG_TAG, "Failed to create worker udp packet: ", e);
           continue;
         }
 
-        Socket dnsSocket = null;
-        DataOutputStream dnsOutputStream = null;
-        DataInputStream dnsInputStream = null;
+        DnsResolverWorker worker = new DnsResolverWorker(
+            m_udpSocket, workerUdpPacket, socksProxy, dnsServerAddress);
         try {
-          dnsSocket = new SocksSocket(socksProxy, dnsServerAddress, DEFAULT_DNS_PORT);
-          dnsSocket.setKeepAlive(true);
-          dnsOutputStream = new DataOutputStream(dnsSocket.getOutputStream());
-          dnsInputStream = new DataInputStream(dnsSocket.getInputStream());
-        } catch (IOException e) {
+          m_executorService.execute(worker);
+        } catch (RejectedExecutionException e) {
           e.printStackTrace();
           continue;
         }
-
-        if (!writeUdpPacketToStream(dnsOutputStream, udpPacket)) {
-          continue;
-        }
-
-        byte dnsResponse[] = readStreamPayload(dnsInputStream);
-        if (dnsResponse == null) {
-          closeSocket(dnsSocket);
-          continue;
-        }
-        Log.d(LOG_TAG, "Got DNS response " + dnsResponse.length);
-
-        if (!sendUdpPayload(dnsResponse, m_udpSocket,
-                            udpPacket.getSocketAddress())) {
-          continue;
-        }
-        closeSocket(dnsSocket);
       }
     } finally {
       if (m_udpSocket != null) {
         m_udpSocket.close();
       }
-    }
-  }
-
-  private boolean isValidDnsRequest(DatagramPacket packet) {
-    if (packet.getLength() < DNS_HEADER_SIZE) {
-      return false;
-    }
-    ByteBuffer buffer = ByteBuffer.wrap(packet.getData());
-    byte qrOpcodeAaTcRd = buffer.get(QR_OPCODE_AA_TC_OFFSET);
-    byte raZRcode = buffer.get(RA_Z_R_CODE_OFFSET);
-    short qdcount = buffer.getShort(QDCOUNT_OFFSET);
-    short ancount = buffer.getShort(ANCOUNT_OFFSET);
-    short nscount = buffer.getShort(NSCOUNT_OFFSET);
-
-    // verify DNS header is request
-    return (qrOpcodeAaTcRd & DNS_QR) == 0 /* query */
-        && (raZRcode & DNS_Z) == 0 /* Z is Zero */
-        && qdcount > 0 /* some questions */
-        && nscount == 0
-        && ancount == 0; /* no answers */
-  }
-
-  // Sends a UDP packet over TCP.
-  private boolean writeUdpPacketToStream(DataOutputStream outputStream,
-                                         DatagramPacket udpPacket) {
-    try {
-      outputStream.writeShort(udpPacket.getLength());
-      outputStream.write(udpPacket.getData());
-      outputStream.flush();
-    } catch (IOException e) {
-      Log.e(LOG_TAG, "Failed to send UDP packet: ", e);
-      return false;
-    }
-    return true;
-  }
-
-  // Reads the payload from a TCP stream.
-  private byte[] readStreamPayload(DataInputStream inputStream) {
-    final String errorMessage = "Failed to read TCP response: ";
-    byte buffer[] = null;
-    try {
-      short responseBytes = inputStream.readShort();
-      buffer = new byte[responseBytes];
-      inputStream.readFully(buffer);
-    } catch (SocketException e) {
-      Log.e(LOG_TAG, errorMessage, e);
-    } catch (IOException e) {
-      Log.e(LOG_TAG, errorMessage, e);
-    }
-    return buffer;
-  }
-
-  // Sends a UDP packet containing |payload| to |destAddress| via |udpSocket|.
-  private boolean sendUdpPayload(byte[] payload, DatagramSocket udpSocket,
-                                 SocketAddress destAddress) {
-    try {
-      DatagramPacket outPacket =
-          new DatagramPacket(payload, payload.length, destAddress);
-      udpSocket.send(outPacket);
-      return true;
-    } catch (IOException e) {
-      Log.d(LOG_TAG, "Failed to send UDP payload ", e);
-    }
-    return false;
-  }
-
-  // Utility method to close a socket.
-  private void closeSocket(Socket socket) {
-    try {
-      if (socket != null && !socket.isClosed()) {
-        socket.close();
+      if (m_executorService != null) {
+        m_executorService.shutdownNow();
       }
-    } catch (IOException e) {
-      Log.w("Failed to close socket ", e);
-    } finally {
-      socket = null;
     }
+  }
+
+  private class DnsResolverWorker implements Runnable {
+
+    private static final String LOG_TAG = "DnsResolverWorker";
+
+    private DatagramSocket m_udpSocket;
+    private DatagramPacket m_udpPacket;
+    Socks5Proxy m_socksProxy;
+    InetAddress m_dnsServerAddress;
+
+    public DnsResolverWorker(
+          DatagramSocket udpSocket, DatagramPacket udpPacket,
+          Socks5Proxy socksProxy, InetAddress dnsServerAddress) {
+      m_udpSocket = udpSocket;
+      m_udpPacket = udpPacket;
+      m_socksProxy = socksProxy;
+      m_dnsServerAddress = dnsServerAddress;
+    }
+
+    @Override
+    public void run() {
+      if (!isValidDnsRequest(m_udpPacket)) {
+        Log.i(LOG_TAG, "Not a DNS request.");
+        return;
+      }
+
+      Socket tcpSocket = null;
+      DataOutputStream tcpOutputStream = null;
+      DataInputStream tcpInputStream = null;
+      try {
+        tcpSocket = new SocksSocket(m_socksProxy, m_dnsServerAddress, DEFAULT_DNS_PORT);
+        tcpSocket.setKeepAlive(true);
+        tcpOutputStream = new DataOutputStream(tcpSocket.getOutputStream());
+        tcpInputStream = new DataInputStream(tcpSocket.getInputStream());
+      } catch (IOException e) {
+        e.printStackTrace();
+        return;
+      }
+
+      if (!writeUdpPacketToStream(tcpOutputStream, m_udpPacket)) {
+        return;
+      }
+
+      byte dnsResponse[] = readStreamPayload(tcpInputStream);
+      if (dnsResponse == null) {
+        closeSocket(tcpSocket);
+        return;
+      }
+      Log.d(LOG_TAG, "Got DNS response " + dnsResponse.length);
+
+      if (!sendUdpPayload(dnsResponse, m_udpSocket,
+                          m_udpPacket.getSocketAddress())) {
+        return;
+      }
+      closeSocket(tcpSocket);
+    }
+
+    private boolean isValidDnsRequest(DatagramPacket packet) {
+      if (packet.getLength() < DNS_HEADER_SIZE) {
+        return false;
+      }
+      ByteBuffer buffer = ByteBuffer.wrap(packet.getData());
+      byte qrOpcodeAaTcRd = buffer.get(QR_OPCODE_AA_TC_OFFSET);
+      byte raZRcode = buffer.get(RA_Z_R_CODE_OFFSET);
+      short qdcount = buffer.getShort(QDCOUNT_OFFSET);
+      short ancount = buffer.getShort(ANCOUNT_OFFSET);
+      short nscount = buffer.getShort(NSCOUNT_OFFSET);
+
+      // verify DNS header is request
+      return (qrOpcodeAaTcRd & DNS_QR) == 0 /* query */
+          && (raZRcode & DNS_Z) == 0 /* Z is Zero */
+          && qdcount > 0 /* some questions */
+          && nscount == 0
+          && ancount == 0; /* no answers */
+    }
+
+    // Sends a UDP packet over TCP.
+    private boolean writeUdpPacketToStream(DataOutputStream outputStream,
+                                           DatagramPacket udpPacket) {
+      try {
+        outputStream.writeShort(udpPacket.getLength());
+        outputStream.write(udpPacket.getData());
+        outputStream.flush();
+      } catch (IOException e) {
+        Log.e(LOG_TAG, "Failed to send UDP packet: ", e);
+        return false;
+      }
+      return true;
+    }
+
+    // Reads the payload from a TCP stream.
+    private byte[] readStreamPayload(DataInputStream inputStream) {
+      final String errorMessage = "Failed to read TCP response: ";
+      byte buffer[] = null;
+      try {
+        short responseBytes = inputStream.readShort();
+        buffer = new byte[responseBytes];
+        inputStream.readFully(buffer);
+      } catch (SocketException e) {
+        Log.e(LOG_TAG, errorMessage, e);
+      } catch (IOException e) {
+        Log.e(LOG_TAG, errorMessage, e);
+      }
+      return buffer;
+    }
+
+    // Sends a UDP packet containing |payload| to |destAddress| via |udpSocket|.
+    private boolean sendUdpPayload(byte[] payload, DatagramSocket udpSocket,
+                                   SocketAddress destAddress) {
+      try {
+        DatagramPacket outPacket =
+            new DatagramPacket(payload, payload.length, destAddress);
+        udpSocket.send(outPacket);
+        return true;
+      } catch (IOException e) {
+        Log.d(LOG_TAG, "Failed to send UDP payload ", e);
+      }
+      return false;
+    }
+
+    // Utility method to close a socket.
+    private void closeSocket(Socket socket) {
+      try {
+        if (socket != null && !socket.isClosed()) {
+          socket.close();
+        }
+      } catch (IOException e) {
+        Log.w("Failed to close socket ", e);
+      } finally {
+        socket = null;
+      }
+    }
+
   }
 
   private void broadcastUdpSocketAddress() {
