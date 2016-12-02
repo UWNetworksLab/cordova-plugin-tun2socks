@@ -90,7 +90,7 @@ public class Tun2Socks extends CordovaPlugin {
   public void onDestroy() {
     // Stop tunnel service in case the user has quit the app without
     // disconnecting the VPN.
-    stopTunnelService();
+    //stopTunnelService();
   }
 
   protected void prepareAndStartTunnelService() {
