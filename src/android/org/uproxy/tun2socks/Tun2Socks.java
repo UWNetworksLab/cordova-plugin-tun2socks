@@ -29,7 +29,7 @@ public class Tun2Socks extends CordovaPlugin {
   // Standard activity result: operation succeeded.
   public static final int RESULT_OK = -1;
 
-  private String m_socksServerAddress;
+  private String m_proxyServerAddress;
   private CallbackContext m_onStartCallback = null;
   private CallbackContext m_onDisconnectCallback = null;
 
@@ -47,8 +47,8 @@ public class Tun2Socks extends CordovaPlugin {
       } else {
         // Set instance variable in case we need to start the tunnel vpn service
         // from onActivityResult.
-        m_socksServerAddress = args.getString(0);
-        Log.i(LOG_TAG, "Got socks server address: " + m_socksServerAddress);
+        m_proxyServerAddress = args.getString(0);
+        Log.i(LOG_TAG, "Got socks server address: " + m_proxyServerAddress);
         m_onStartCallback = callbackContext;
         prepareAndStartTunnelService();
       }
@@ -142,12 +142,12 @@ public class Tun2Socks extends CordovaPlugin {
       Log.d(LOG_TAG, "already running service");
       TunnelManager tunnelManager = TunnelState.getTunnelState().getTunnelManager();
       if (tunnelManager != null) {
-        tunnelManager.restartTunnel(m_socksServerAddress);
+        tunnelManager.restartTunnel(m_proxyServerAddress);
       }
       return;
     }
     Intent startTunnelVpn = new Intent(context, TunnelVpnService.class);
-    startTunnelVpn.putExtra(TunnelManager.SOCKS_SERVER_ADDRESS_EXTRA, m_socksServerAddress);
+    startTunnelVpn.putExtra(TunnelManager.PROXY_SERVER_ADDRESS_EXTRA, m_proxyServerAddress);
     if (this.cordova.getActivity().startService(startTunnelVpn) == null) {
       Log.d(LOG_TAG, "failed to start tunnel vpn service");
       return;

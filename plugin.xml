@@ -38,6 +38,10 @@
       src="src/android/org/uproxy/tun2socks"
       target-dir="src/org/uproxy/tun2socks" />
 
+    <source-file
+      src="src/android/com/google/jigsaw/sockstohttps"
+      target-dir="src/com/google/jigsaw/sockstohttps" />
+
     <framework src="src/android/org/uproxy/tun2socks/build.gradle"
       custom="true" type="gradleReference" />
 

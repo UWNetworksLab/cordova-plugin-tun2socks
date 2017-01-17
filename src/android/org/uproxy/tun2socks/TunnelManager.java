@@ -32,12 +32,16 @@ import android.os.IBinder;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
+import com.google.jigsaw.sockstohttps.HttpSocksProxy;
+
+import java.net.URI;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TunnelManager implements Tunnel.HostService {
 
   private static final String LOG_TAG = "TunnelManager";
+  public static final String PROXY_SERVER_ADDRESS_EXTRA = "proxyServerAddress";
   public static final String SOCKS_SERVER_ADDRESS_EXTRA = "socksServerAddress";
 
   private TunnelVpnService m_parentService = null;
@@ -45,7 +49,9 @@ public class TunnelManager implements Tunnel.HostService {
   private Thread m_tunnelThread;
   private AtomicBoolean m_isStopping;
   private Tunnel m_tunnel = null;
+  private String m_proxyServerAddress;
   private String m_socksServerAddress;
+  private HttpSocksProxy m_socks;
   private AtomicBoolean m_isReconnecting;
 
   public TunnelManager(TunnelVpnService parentService) {
@@ -62,23 +68,64 @@ public class TunnelManager implements Tunnel.HostService {
         .registerReceiver(
             m_broadcastReceiver, new IntentFilter(DnsResolverService.DNS_ADDRESS_BROADCAST));
 
-    m_socksServerAddress = intent.getStringExtra(SOCKS_SERVER_ADDRESS_EXTRA);
-    if (m_socksServerAddress == null) {
+    m_proxyServerAddress = intent.getStringExtra(PROXY_SERVER_ADDRESS_EXTRA);
+    if (m_proxyServerAddress == null) {
       Log.e(LOG_TAG, "Failed to receive the socks server address.");
       m_parentService.broadcastVpnStart(false /* success */);
       return 0;
     }
+
+    startHttpSocksProxy();
 
     try {
       if (!m_tunnel.startRouting()) {
         Log.e(LOG_TAG, "Failed to establish VPN");
         m_parentService.broadcastVpnStart(false /* success */);
       }
+      startDnsResolverService();
     } catch (Tunnel.Exception e) {
       Log.e(LOG_TAG, String.format("Failed to establish VPN: %s", e.getMessage()));
       m_parentService.broadcastVpnStart(false /* success */);
     }
     return android.app.Service.START_NOT_STICKY;
+  }
+
+  private void startHttpSocksProxy() {
+    // TODO: make an IPv6-safe parser.
+    URI proxyUri;
+    try {
+      proxyUri = new URI(m_proxyServerAddress);
+    } catch (Exception e) {
+      Log.e(LOG_TAG, e.toString());
+      return;
+    }
+    String scheme = proxyUri.getScheme();
+    String host = proxyUri.getHost();
+    int proxyPort = proxyUri.getPort();
+    int socksPort;
+    // TODO: support insecure HTTP?
+    if ("socks5".equals(scheme)) {
+      socksPort = proxyPort == -1 ? 1080 : proxyPort;
+    } else if ("https".equals(scheme)) {
+      String userInfo = proxyUri.getUserInfo();
+      String username = null;
+      String password = null;
+      if (userInfo != null) {
+        if (userInfo.contains(":")) {
+          String[] split = userInfo.split(":");
+          username = split[0];
+          password = split[1];
+        } else {
+          username = userInfo;
+        }
+      }
+      m_socks = new HttpSocksProxy();
+      socksPort = m_socks.start("https", host, proxyPort, username, password);
+    } else {
+      Log.e(LOG_TAG, "Invalid proxy address: " + m_proxyServerAddress);
+      return;
+    }
+    m_socksServerAddress = "127.0.0.1:" + socksPort;
   }
 
   // Implementation of android.app.Service.onDestroy
@@ -117,15 +164,16 @@ public class TunnelManager implements Tunnel.HostService {
   }
 
   // Stops the tunnel thread and restarts it with |socksServerAddress|.
-  public void restartTunnel(final String socksServerAddress) {
+  public void restartTunnel(final String proxyServerAddress) {
     Log.i(LOG_TAG, "Restarting tunnel.");
-    if (socksServerAddress == null ||
-        socksServerAddress.equals(m_socksServerAddress)) {
+    if (proxyServerAddress == null ||
+        proxyServerAddress.equals(m_proxyServerAddress)) {
       // Don't reconnect if the socks server address hasn't changed.
       m_parentService.broadcastVpnStart(true /* success */);
       return;
     }
-    m_socksServerAddress = socksServerAddress;
+    m_proxyServerAddress = proxyServerAddress;
+    startHttpSocksProxy();
     m_isReconnecting.set(true);
 
     // Signaling stop to the tunnel thread with the reconnect flag set causes
@@ -225,7 +273,6 @@ public class TunnelManager implements Tunnel.HostService {
   @TargetApi(Build.VERSION_CODES.M)
   public void onVpnEstablished() {
     Log.i(LOG_TAG, "VPN established.");
-    startDnsResolverService();
   }
 
   private void startDnsResolverService() {
