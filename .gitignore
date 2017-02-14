@@ -9,3 +9,8 @@ Thumbs.db
 *.log
 *.swp
 *.user
+
+.gradle
+.idea
+.vscode
+android/obj
