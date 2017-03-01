@@ -85,6 +85,7 @@ typedef struct {
     char *buffer;
     BConnector connector;
     BConnection con;
+    const char *domain_name;
     union {
         struct {
             PacketPassInterface *send_if;

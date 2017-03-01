@@ -401,6 +401,166 @@ static void udp_free(UdpPcb* udp_pcb) {
     BStringMap_Free(&udp_pcb->map);
 }
 
+// ***** AutomapHostsOnResolve ******
+
+// Assumes 0 <= max <= RAND_MAX
+// Returns in the closed interval [0, max]
+// http://stackoverflow.com/questions/2509679/how-to-generate-a-random-number-from-within-a-range
+static long random_at_most(long max) {
+  unsigned long
+    // max <= RAND_MAX < ULONG_MAX, so this is okay.
+    num_bins = (unsigned long) max + 1,
+    num_rand = (unsigned long) RAND_MAX + 1,
+    bin_size = num_rand / num_bins,
+    defect   = num_rand % num_bins;
+
+  long x;
+  do {
+   x = random();
+  }
+  // This is carefully written not to overflow
+  while (num_rand - defect <= (unsigned long)x);
+
+  // Truncated division is intentional
+  return x/bin_size;
+}
+
+
+// Parse a CIDR string into a host-order network address and integer prefix
+static int parse_cidr(char* cidr, BIPAddr* address, uint8_t* prefix) {
+    char* prefix_str, ip_str[16];
+
+    if (prefix_str = strchr(cidr, '/')) {
+        int ip_str_len = prefix_str - cidr;
+        memcpy(ip_str, cidr, ip_str_len);
+        ip_str[ip_str_len] = '\0';
+
+        prefix_str++;
+        *prefix = (uint8_t) strtoul(prefix_str, NULL, 10);
+        if (*prefix_str == '\0' || *prefix > 32) {
+          BLog(BLOG_ERROR, "invalid CIDR: %s", cidr);
+          return 0;
+        }
+    }
+
+    if (!BIPAddr_Resolve(address, ip_str, 1)) {
+        BLog(BLOG_ERROR, "failed to resolve IP address %s", ip_str);
+        return 0;
+    }
+    return 1;
+}
+
+static uint32_t get_netmask(uint8_t prefix) {
+    if (prefix == 0) {
+        return ~((uint32_t) -1);
+    } else {
+        return ~((1 << (32 - prefix)) - 1);
+    }
+}
+
+static uint32_t get_broadcast_address(uint32_t addr, uint8_t prefix) {
+    return addr | ~get_netmask(prefix);
+}
+
+static uint32_t get_network_address(uint32_t addr, uint8_t prefix) {
+    return addr & get_netmask(prefix);
+}
+
+typedef struct {
+    BIPAddr first_ip;
+    BIPAddr last_ip;
+    BStringMap host_to_address;
+    BStringMap address_to_host;
+    uint32_t count;
+} HostAutomap;
+
+
+HostAutomap host_automap;
+
+static int HostAutomap_Init(HostAutomap* host_automap, char* cidr) {
+    BIPAddr ip_addr;
+    uint8_t subnet_prefix;
+    if (!parse_cidr(cidr, &ip_addr, &subnet_prefix)) {
+        return 0;
+    }
+    // Convert to network order for the masks to work consistently.
+    ip_addr.ipv4 = htonl(ip_addr.ipv4);
+
+    char addr_str[16];
+    BIPAddr_Print(&ip_addr, addr_str);
+    BLog(BLOG_ERROR, "IP: %s/%lu, PREFIX: %lu", addr_str, ip_addr.ipv4, subnet_prefix);
+
+    uint32_t network_address = get_network_address(ip_addr.ipv4, subnet_prefix);
+    uint32_t broadcast_address = get_broadcast_address(ip_addr.ipv4, subnet_prefix);
+
+    BIPAddr_InitIPv4(&host_automap->first_ip, network_address);
+    BIPAddr_InitIPv4(&host_automap->last_ip, broadcast_address);
+
+    host_automap->count = 1;
+
+    BIPAddr_Print(&host_automap->first_ip, addr_str);
+    BLog(BLOG_ERROR, "FIRST: %s/%lu/%lu", addr_str, network_address);
+    BIPAddr_Print(&host_automap->last_ip, addr_str);
+    BLog(BLOG_ERROR, "LAST: %s/%lu/%lu", addr_str, broadcast_address);
+
+    BStringMap_Init(&host_automap->address_to_host);
+    BStringMap_Init(&host_automap->host_to_address);
+
+    return 1;
+}
+
+static void HostAutomap_Free(HostAutomap* host_automap) {
+    BStringMap_Free(&host_automap->host_to_address);
+    BStringMap_Free(&host_automap->address_to_host);
+}
+
+// TODO(alalama): randomize, remove assert
+static uint32_t get_next_address(HostAutomap* host_automap) {
+    uint32_t next_ip = host_automap->first_ip.ipv4 + host_automap->count++;
+    ASSERT(!BStringMap_Get(&host_automap->address_to_host, next_ip));
+    if (next_ip > host_automap->last_ip.ipv4) {
+        return 0;
+    }
+    return next_ip;
+}
+
+static uint32_t HostAutomap_MapHost(HostAutomap* host_automap, const char* host) {
+    uint32_t next_ip = get_next_address(host_automap);
+    if (next_ip == 0) {
+        BLog(BLOG_ERROR, "HostAutomap_MapHost: failed to get next address.");
+        return 0;
+    }
+    BIPAddr ip_addr;
+    BIPAddr_InitIPv4(&ip_addr, next_ip);
+
+    char addr_str[16];
+    BIPAddr_Print(&ip_addr, addr_str);
+    BLog(BLOG_INFO, "ADDR: %s/%lu", addr_str, ip_addr.ipv4);
+    if (!BStringMap_Set(&host_automap->address_to_host, addr_str, host)) {
+        BLog(BLOG_ERROR, "HostAutomap_MapHost: failed to map address.");
+        return 0;
+    }
+
+    return next_ip;
+}
+
+static const char* HostAutomap_GetHostFromAddress(HostAutomap* host_automap,
+                                                  BIPAddr addr) {
+    char addr_str[16];
+    BIPAddr_Print(&addr, addr_str);
+    BLog(BLOG_WARNING, "KEY ADDR: %s/%u", addr_str, addr.ipv4);
+    const char* hostname = BStringMap_Get(&host_automap->address_to_host, addr_str);
+    if (!hostname) {
+        BLog(BLOG_WARNING, "HostAutomap_GetHostFromAddress: failed to retrieve address %s", addr_str);
+        return NULL;
+    }
+    // TODO(alalama): unset entry and malloc hostname
+    BLog(BLOG_INFO, "HOSTNAME: %s", hostname);
+    return hostname;
+}
+
+
+// ***** /AutomapHostsOnResolve ******
 //==== UPROXY =====
 
 //==== PSIPHON ====
@@ -696,7 +856,10 @@ void run()
     num_clients = 0;
 
     // ==== UPROXY ====
-    if (!udp_init(&udp_pcb)) {
+    // if (!udp_init(&udp_pcb)) {
+    //     goto fail5;
+    // }
+    if (!HostAutomap_Init(&host_automap, "10.0.0.0/8")) {
         goto fail5;
     }
     // ==== UPROXY ====
@@ -743,7 +906,7 @@ void run()
     // ==== PSIPHON ====
 
     // ==== UPROXY ====
-    udp_free(&udp_pcb);
+    // udp_free(&udp_pcb);
     // ==== UPROXY ====
 
     BReactor_RemoveTimer(&ss, &tcp_timer);
@@ -1417,7 +1580,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             // if transparent DNS is enabled, any packet arriving at out netif
             // address to port 53 is considered a DNS packet
             is_dns = (options.transparent_dns &&
-                      ipv4_header.destination_address == netif_ipaddr.ipv4 &&
+                      // ipv4_header.destination_address == netif_ipaddr.ipv4 &&
                       udp_header.dest_port == hton16(UDP_DNS_PORT));
         } break;
 
@@ -1480,20 +1643,67 @@ int process_device_udp_packet (uint8_t *data, int data_len)
     BLog(BLOG_INFO, "UDP: %s -> %s. DNS: %d", local_addr_str, remote_addr_str, is_dns);
 
     if (options.dns_server_address && is_dns) {
-        int sent_bytes = udp_send(udp_pcb.sockfd, data, data_len);
-        if (sent_bytes < data_len) {
-            BLog(BLOG_ERROR, "udp_send: sent %d bytes, expected %d",
-                 sent_bytes, data_len);
-            return 1;
+        char name[255];
+        dns_get_name(name, data + sizeof(struct dns_header));
+        BLog(BLOG_INFO, "NAME: %s", name);
+        uint32_t ip_address = HostAutomap_MapHost(&host_automap, name);
+        if (ip_address == 0) {
+            goto fail;
         }
 
-        char dns_id_str[DNS_ID_STRLEN];
-        dns_get_header_id_str(dns_id_str, data);
-        if (!BStringMap_Set(&udp_pcb.map, dns_id_str, local_addr_str)) {
-            BLog(BLOG_ERROR,
-                 "failed to associate dns request id to local address");
-            return 1;
+        char encoded_name[255];
+        dns_encode_name(name, encoded_name);
+
+        int name_len = strlen(name) + 2;  // leading length octet + null terminator
+        int response_len = sizeof(struct dns_header) + sizeof(struct dns_question) + name_len + sizeof(struct dns_A_answer);
+        uint8_t dns_response[response_len];
+        memset(dns_response, 0, response_len);
+        memcpy(dns_response, data, data_len);
+
+        struct dns_header* header = (struct dns_header*)dns_response;
+        header->ancount = htons(1);
+        dns_set_qr(dns_response);
+        dns_set_rcode(dns_response, 0/* no error */);
+        // BLog(BLOG_INFO, "A: %u, QR: %u, RCODE: %u", header->ancount, dns_get_qr(dns_response), dns_get_rcode(dns_response));
+
+        struct dns_question* question = (struct dns_question*)(dns_response + sizeof(struct dns_header) + name_len);
+        // BLog(BLOG_INFO, "QTYPE: %u, QCLS: %u", htons(question->type), htons(question->cls));
+        if (htons(question->type) != 1) {
+            return 0;
         }
+
+        uint16_t name_ptr = (dns_encode_compressed_name(sizeof(struct dns_header)));
+        struct dns_A_answer* answer = (struct dns_A_answer*)((uint8_t *)question + sizeof(struct dns_question));
+        answer->cname = htons(name_ptr);
+        answer->type = htons(1);
+        answer->cls = htons(1);
+        answer->ttl = htonl(100);
+        answer->rdlength = htons(4);
+        answer->rdata = htonl(ip_address);
+
+        // for (int i = 0; i < response_len; ++i) {
+        //     BLog(BLOG_INFO, "%d: %u (%u)", i, dns_response[i], i < data_len ? data[i] : 0);
+        // }
+
+        udp_send_packet_to_device(NULL, local_addr, remote_addr, dns_response,
+                                  response_len);
+
+        // ==== UPROXY ====
+        // int sent_bytes = udp_send(udp_pcb.sockfd, data, data_len);
+        // if (sent_bytes < data_len) {
+        //     BLog(BLOG_ERROR, "udp_send: sent %d bytes, expected %d",
+        //          sent_bytes, data_len);
+        //     return 1;
+        // }
+
+        // char dns_id_str[DNS_ID_STRLEN];
+        // dns_get_header_id_str(dns_id_str, data);
+        // if (!BStringMap_Set(&udp_pcb.map, dns_id_str, local_addr_str)) {
+        //     BLog(BLOG_ERROR,
+        //          "failed to associate dns request id to local address");
+        //     return 1;
+        // }
+        // ==== UPROXY ====
     } else if (options.udpgw_remote_server_addr) {
         // submit packet to udpgw
         SocksUdpGwClient_SubmitPacket(&udpgw_client, local_addr, remote_addr,
@@ -1638,9 +1848,17 @@ err_t listener_accept_func (void *arg, struct tcp_pcb *newpcb, err_t err)
     BLog(BLOG_NOTICE, "TCP: %s -> %s", local_addr_str, remote_addr_str);
 
     // get destination address
-    BAddr addr = client->local_addr;
+    // BAddr addr = client->local_addr;
+    BIPAddr addr;
+    BIPAddr_InitIPv4(&addr, htonl(client->local_addr.ipv4.ip));
+    const char * hostname = HostAutomap_GetHostFromAddress(&host_automap, addr);
+    if (!hostname) {
+        goto fail1;
+    }
+    BAddr domain_addr = BAddr_MakeDomain(hostname, client->local_addr.ipv4.port);
+
 #ifdef OVERRIDE_DEST_ADDR
-    ASSERT_FORCE(BAddr_Parse2(&addr, OVERRIDE_DEST_ADDR, NULL, 0, 1))
+    ASSERT_FORCE(BAddr_Parse2(&client->local_addr, OVERRIDE_DEST_ADDR, NULL, 0, 1))
 #endif
 
     // add source address to username if requested
@@ -1657,7 +1875,7 @@ err_t listener_accept_func (void *arg, struct tcp_pcb *newpcb, err_t err)
 
     // init SOCKS
     if (!BSocksClient_Init(&client->socks_client, socks_server_addr, socks_auth_info, socks_num_auth_info,
-                           addr, (BSocksClient_handler)client_socks_handler, client, &ss)) {
+                           domain_addr, (BSocksClient_handler)client_socks_handler, client, &ss)) {
         BLog(BLOG_ERROR, "listener accept: BSocksClient_Init failed");
         goto fail1;
     }

@@ -51,6 +51,8 @@
 #define STATE_RECEIVED_REPLY_HEADER 6
 #define STATE_UP 7
 
+#define SOCKS_DOMAINNAME_FIXED_LENGHT 3  // 1 length octet + 2 port octets
+
 static void report_error (BSocksClient *o, int error);
 static void init_control_io (BSocksClient *o);
 static void free_control_io (BSocksClient *o);
@@ -167,7 +169,7 @@ void connector_handler (BSocksClient* o, int is_error)
         goto fail0;
     }
     
-    BLog(BLOG_DEBUG, "connected");
+    BLog(BLOG_INFO, "connected");
     
     // init control I/O
     init_control_io(o);
@@ -248,7 +250,7 @@ void recv_handler_done (BSocksClient *o, int data_len)
     
     switch (o->state) {
         case STATE_SENT_HELLO: {
-            BLog(BLOG_DEBUG, "received hello");
+            BLog(BLOG_INFO, "received hello");
             
             struct socks_server_hello imsg;
             memcpy(&imsg, o->buffer, sizeof(imsg));
@@ -274,13 +276,13 @@ void recv_handler_done (BSocksClient *o, int data_len)
             
             switch (ai->auth_type) {
                 case SOCKS_METHOD_NO_AUTHENTICATION_REQUIRED: {
-                    BLog(BLOG_DEBUG, "no authentication");
+                    BLog(BLOG_INFO, "no authentication");
                     
                     auth_finished(o);
                 } break;
                 
                 case SOCKS_METHOD_USERNAME_PASSWORD: {
-                    BLog(BLOG_DEBUG, "password authentication");
+                    BLog(BLOG_INFO, "password authentication");
                     
                     if (ai->password.username_len == 0 || ai->password.username_len > 255 ||
                         ai->password.password_len == 0 || ai->password.password_len > 255
@@ -317,7 +319,7 @@ void recv_handler_done (BSocksClient *o, int data_len)
         } break;
         
         case STATE_SENT_REQUEST: {
-            BLog(BLOG_DEBUG, "received reply header");
+            BLog(BLOG_INFO, "received reply header");
             
             struct socks_reply_header imsg;
             memcpy(&imsg, o->buffer, sizeof(imsg));
@@ -353,7 +355,7 @@ void recv_handler_done (BSocksClient *o, int data_len)
         } break;
         
         case STATE_SENT_PASSWORD: {
-            BLog(BLOG_DEBUG, "received password reply");
+            BLog(BLOG_INFO, "received password reply");
             
             if (o->buffer[0] != 1) {
                 BLog(BLOG_NOTICE, "password reply has unknown version");
@@ -369,7 +371,7 @@ void recv_handler_done (BSocksClient *o, int data_len)
         } break;
         
         case STATE_RECEIVED_REPLY_HEADER: {
-            BLog(BLOG_DEBUG, "received reply rest");
+            BLog(BLOG_INFO, "received reply rest");
             
             // free buffer
             BFree(o->buffer);
@@ -406,7 +408,7 @@ void send_handler_done (BSocksClient *o)
     
     switch (o->state) {
         case STATE_SENDING_HELLO: {
-            BLog(BLOG_DEBUG, "sent hello");
+            BLog(BLOG_INFO, "sent hello");
             
             // allocate buffer for receiving hello
             bsize_t size = bsize_fromsize(sizeof(struct socks_server_hello));
@@ -422,12 +424,15 @@ void send_handler_done (BSocksClient *o)
         } break;
         
         case STATE_SENDING_REQUEST: {
-            BLog(BLOG_DEBUG, "sent request");
-            
+            BLog(BLOG_INFO, "sent request %s", o->dest_addr.type == BADDR_TYPE_DOMAIN ? o->dest_addr.domain.name : "");
+            bsize_t name_len = bsize_fromsize(o->dest_addr.type == BADDR_TYPE_DOMAIN ? strlen(o->dest_addr.domain.name) + SOCKS_DOMAINNAME_FIXED_LENGHT : 0);
+            bsize_t max = bsize_max(bsize_fromsize(sizeof(struct socks_addr_ipv4)), bsize_fromsize(sizeof(struct socks_addr_ipv6)));
+            max = bsize_max(max, name_len);
             // allocate buffer for receiving reply
             bsize_t size = bsize_add(
                 bsize_fromsize(sizeof(struct socks_reply_header)),
-                bsize_max(bsize_fromsize(sizeof(struct socks_addr_ipv4)), bsize_fromsize(sizeof(struct socks_addr_ipv6)))
+                max
+                // bsize_max(bsize_fromsize(sizeof(struct socks_addr_ipv4)), bsize_fromsize(sizeof(struct socks_addr_ipv6)))
             );
             if (!reserve_buffer(o, size)) {
                 goto fail;
@@ -441,7 +446,7 @@ void send_handler_done (BSocksClient *o)
         } break;
         
         case STATE_SENDING_PASSWORD: {
-            BLog(BLOG_DEBUG, "send password");
+            BLog(BLOG_INFO, "send password");
             
             // allocate buffer for receiving reply
             bsize_t size = bsize_fromsize(2);
@@ -470,9 +475,14 @@ void auth_finished (BSocksClient *o)
 {
     // allocate request buffer
     bsize_t size = bsize_fromsize(sizeof(struct socks_request_header));
+    uint8_t name_len = 0;
     switch (o->dest_addr.type) {
         case BADDR_TYPE_IPV4: size = bsize_add(size, bsize_fromsize(sizeof(struct socks_addr_ipv4))); break;
         case BADDR_TYPE_IPV6: size = bsize_add(size, bsize_fromsize(sizeof(struct socks_addr_ipv6))); break;
+        case BADDR_TYPE_DOMAIN: {
+            name_len = (uint8_t)strlen(o->dest_addr.domain.name);
+            size = bsize_add(size, bsize_fromsize(name_len + SOCKS_DOMAINNAME_FIXED_LENGHT));
+        } break;
     }
     if (!reserve_buffer(o, size)) {
         report_error(o, BSOCKSCLIENT_EVENT_ERROR);
@@ -499,6 +509,13 @@ void auth_finished (BSocksClient *o)
             addr.port = o->dest_addr.ipv6.port;
             memcpy(o->buffer + sizeof(header), &addr, sizeof(addr));
         } break;
+        case BADDR_TYPE_DOMAIN: {
+            header.atyp = hton8(SOCKS_ATYP_DOMAINNAME);
+            *(o->buffer + sizeof(header)) = name_len;
+            memcpy(o->buffer + sizeof(header) + 1, o->dest_addr.domain.name, name_len);
+            memcpy(o->buffer + sizeof(header) + 1 + name_len, &o->dest_addr.domain.port, sizeof(o->dest_addr.domain.port));
+        };
+        break;
         default:
             ASSERT(0);
     }
@@ -534,7 +551,8 @@ int BSocksClient_Init (BSocksClient *o,
                        BAddr dest_addr, BSocksClient_handler handler, void *user, BReactor *reactor)
 {
     ASSERT(!BAddr_IsInvalid(&server_addr))
-    ASSERT(dest_addr.type == BADDR_TYPE_IPV4 || dest_addr.type == BADDR_TYPE_IPV6)
+    ASSERT(dest_addr.type == BADDR_TYPE_IPV4 || dest_addr.type == BADDR_TYPE_IPV6 ||
+           dest_addr.type == BADDR_TYPE_DOMAIN)
 #ifndef NDEBUG
     for (size_t i = 0; i < num_auth_info; i++) {
         ASSERT(auth_info[i].auth_type == SOCKS_METHOD_NO_AUTHENTICATION_REQUIRED ||
@@ -552,7 +570,11 @@ int BSocksClient_Init (BSocksClient *o,
     
     // set no buffer
     o->buffer = NULL;
-    
+
+    if (dest_addr.type == BADDR_TYPE_DOMAIN) {
+        BLog(BLOG_INFO, "SOCKS hostname: %s", o->dest_addr.domain.name);
+    }
+
     // init connector
     if (!BConnector_Init(&o->connector, server_addr, o->reactor, o, (BConnector_handler)connector_handler)) {
         BLog(BLOG_ERROR, "BConnector_Init failed");
@@ -595,6 +617,11 @@ void BSocksClient_Free (BSocksClient *o)
     if (o->buffer) {
         BFree(o->buffer);
     }
+
+    // TODO(alalama): figure out memory management
+    // if (o->dest_addr.type == BADDR_TYPE_DOMAIN && o->dest_addr.domain.name) {
+    //     free((char *)o->dest_addr.domain.name);
+    // }
 }
 
 StreamPassInterface * BSocksClient_GetSendInterface (BSocksClient *o)
