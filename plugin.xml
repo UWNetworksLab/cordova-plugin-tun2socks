@@ -10,6 +10,10 @@
     <engine name="cordova-android" version=">=4.0.0-dev" />
   </engines>
 
+  <js-module src="tun2socks.js" name="tun2socks">
+    <clobbers target="tun2socks" />
+  </js-module>
+
   <platform name="android">
     <config-file target="res/xml/config.xml" parent="/*">
       <feature name="Tun2Socks">
@@ -35,18 +39,13 @@
     </config-file>
 
     <source-file
-      src="src/android/org/uproxy/tun2socks"
+      src="android/java/org/uproxy/tun2socks"
       target-dir="src/org/uproxy/tun2socks" />
 
-    <framework src="src/android/org/uproxy/tun2socks/build.gradle"
-      custom="true" type="gradleReference" />
+    <source-file
+      src="android/libs/armeabi-v7a/libtun2socks.so"
+      target-dir="libs/armeabi-v7a" />
 
-    <resource-file src="src/badvpn" target="badvpn" />
-    <resource-file src="src/android/jni" target="jni" />
-    <resource-file src="src/android/libs" target="libs" />
-
-    <js-module src="tun2socks.js" name="tun2socks">
-      <clobbers target="tun2socks" />
-    </js-module>
+		<framework src="android/java/build-extras.gradle" custom="true" type="gradleReference" />
   </platform>
 </plugin>

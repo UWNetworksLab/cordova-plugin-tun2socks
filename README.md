@@ -6,6 +6,10 @@ We use [tun2socks](https://github.com/ambrop72/badvpn-googlecode-export/blob/mas
 
 To handle DNS resoution, we have implemented a local DNS resolver that intercepts DNS queries over UDP and proxies them over TCP (to Google Public DNS) through the SOCKS server.
 
+## Re-building the .so
+
+ndk-build -C android
+
 ### Target Devices
 
 This plugin targets Android devices running Lollipop (API 21), or higher. This requirement stems from calling `addDisallowedApplication`, a [VPNService.Builder API](https://developer.android.com/reference/android/net/VpnService.Builder.html#addDisallowedApplication(java.lang.String)) introduced in version 21, which allows the specified application's traffic to bypass the VPN.
