@@ -14,6 +14,7 @@
     <clobbers target="tun2socks" />
   </js-module>
 
+  <!-- Android -->
   <platform name="android">
     <config-file target="res/xml/config.xml" parent="/*">
       <feature name="Tun2Socks">
@@ -45,4 +46,23 @@
 
 		<framework src="android/java/build-extras.gradle" custom="true" type="gradleReference" />
   </platform>
+
+  <!-- iOS -->
+  <platform name="ios">
+    <config-file target="config.xml" parent="/*">
+      <feature name="Tun2Socks">
+        <param name="ios-package" value="Tun2Socks" />
+        <param name="onload" value="true" />
+      </feature>
+    </config-file>
+
+    <source-file src="ios/src/Tun2Socks.swift" />
+    <framework src="ios/lib/CocoaAsyncSocket.framework" custom="true" />
+    <framework src="ios/lib/PacketProcessor.framework" custom="true" />
+    <framework src="ios/lib/ShadowPath.framework" custom="true" />
+
+
+    <dependency id="cordova-plugin-add-swift-support" version="1.6.1"/>
+  </platform>
+
 </plugin>
