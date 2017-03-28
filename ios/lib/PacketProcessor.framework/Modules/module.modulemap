@@ -1,0 +1,6 @@
+framework module PacketProcessor {
+  umbrella header "PacketProcessor.h"
+
+  export *
+  module * { export * }
+}

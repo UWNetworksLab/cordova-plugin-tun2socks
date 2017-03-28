@@ -1,0 +1,6 @@
+framework module ShadowPath {
+  umbrella header "ShadowPath.h"
+
+  export *
+  module * { export * }
+}
