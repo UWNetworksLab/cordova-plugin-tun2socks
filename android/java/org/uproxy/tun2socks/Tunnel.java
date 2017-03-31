@@ -103,9 +103,9 @@ public class Tunnel {
   }
 
   // Starts tun2socks. Returns true on success.
-  public synchronized boolean startTunneling(String socksServerAddress, String dnsServerAddress)
+  public synchronized boolean startTunneling(String socksServerAddress)
       throws Exception {
-    return routeThroughTunnel(socksServerAddress, dnsServerAddress);
+    return routeThroughTunnel(socksServerAddress);
   }
 
   // Stops routing traffic through the tunnel by stopping tun2socks.
@@ -185,7 +185,7 @@ public class Tunnel {
     return true;
   }
 
-  private boolean routeThroughTunnel(String socksServerAddress, String dnsServerAddress) {
+  private boolean routeThroughTunnel(String socksServerAddress) {
     if (!mRoutingThroughTunnel.compareAndSet(false, true)) {
       return false;
     }
@@ -245,7 +245,7 @@ public class Tunnel {
       final String vpnIpAddress,
       final String vpnNetMask,
       final String socksServerAddress,
-      final String dnsServerAddress,
+      final String dnsResolverAddress,
       final boolean transparentDns) {
     if (mTun2SocksThread != null) {
       return;
@@ -261,7 +261,7 @@ public class Tunnel {
                     vpnIpAddress,
                     vpnNetMask,
                     socksServerAddress,
-                    dnsServerAddress,
+                    dnsResolverAddress,
                     transparentDns ? 1 : 0);
               }
             });

@@ -21,15 +21,11 @@ package org.uproxy.tun2socks;
 
 import android.annotation.TargetApi;
 import android.app.Service;
-import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.IBinder;
-import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
 import java.util.concurrent.CountDownLatch;
@@ -58,10 +54,6 @@ public class TunnelManager implements Tunnel.HostService {
   // Implementation of android.app.Service.onStartCommand
   public int onStartCommand(Intent intent, int flags, int startId) {
     Log.i(LOG_TAG, "onStartCommand");
-    LocalBroadcastManager.getInstance(m_parentService)
-        .registerReceiver(
-            m_broadcastReceiver, new IntentFilter(DnsResolverService.DNS_ADDRESS_BROADCAST));
-
     m_socksServerAddress = intent.getStringExtra(SOCKS_SERVER_ADDRESS_EXTRA);
     if (m_socksServerAddress == null) {
       Log.e(LOG_TAG, "Failed to receive the socks server address.");
@@ -86,12 +78,6 @@ public class TunnelManager implements Tunnel.HostService {
     if (m_tunnelThread == null) {
       return;
     }
-
-    LocalBroadcastManager.getInstance(m_parentService).unregisterReceiver(m_broadcastReceiver);
-
-    // Stop DNS resolver service
-    m_parentService.stopService(new Intent(m_parentService, DnsResolverService.class));
-
     // signalStopService should have been called, but in case is was not, call here.
     // If signalStopService was not already called, the join may block the calling
     // thread for some time.
@@ -135,24 +121,24 @@ public class TunnelManager implements Tunnel.HostService {
     signalStopService();
   }
 
-  private void startTunnel(final String dnsResolverAddress) {
+  private void startTunnel() {
     m_tunnelThreadStopSignal = new CountDownLatch(1);
     m_tunnelThread =
         new Thread(
             new Runnable() {
               @Override
               public void run() {
-                runTunnel(m_socksServerAddress, dnsResolverAddress);
+                runTunnel(m_socksServerAddress);
               }
             });
     m_tunnelThread.start();
   }
 
-  private void runTunnel(String socksServerAddress, String dnsResolverAddress) {
+  private void runTunnel(String socksServerAddress) {
     m_isStopping.set(false);
 
     try {
-      if (!m_tunnel.startTunneling(socksServerAddress, dnsResolverAddress)) {
+      if (!m_tunnel.startTunneling(socksServerAddress)) {
         throw new Tunnel.Exception("application is not prepared or revoked");
       }
       Log.i(LOG_TAG, "VPN service running");
@@ -174,8 +160,6 @@ public class TunnelManager implements Tunnel.HostService {
         // Stop tunneling only, not VPN, if reconnecting.
         Log.i(LOG_TAG, "Stopping tunnel.");
         m_tunnel.stopTunneling();
-        // Start the DNS resolver service with the new SOCKS server address.
-        startDnsResolverService();
       } else {
         // Stop VPN tunnel and service only if not reconnecting.
         Log.i(LOG_TAG, "Stopping VPN and tunnel.");
@@ -225,35 +209,6 @@ public class TunnelManager implements Tunnel.HostService {
   @TargetApi(Build.VERSION_CODES.M)
   public void onVpnEstablished() {
     Log.i(LOG_TAG, "VPN established.");
-    startDnsResolverService();
+    startTunnel();
   }
-
-  private void startDnsResolverService() {
-    Intent dnsResolverStart = new Intent(m_parentService, DnsResolverService.class);
-    dnsResolverStart.putExtra(SOCKS_SERVER_ADDRESS_EXTRA, m_socksServerAddress);
-    m_parentService.startService(dnsResolverStart);
-  }
-
-  private DnsResolverAddressBroadcastReceiver m_broadcastReceiver =
-      new DnsResolverAddressBroadcastReceiver(TunnelManager.this);
-
-  private class DnsResolverAddressBroadcastReceiver extends BroadcastReceiver {
-    private TunnelManager m_tunnelManager;
-
-    public DnsResolverAddressBroadcastReceiver(TunnelManager tunnelManager) {
-      m_tunnelManager = tunnelManager;
-    }
-
-    @Override
-    public void onReceive(Context context, Intent intent) {
-      String dnsResolverAddress = intent.getStringExtra(DnsResolverService.DNS_ADDRESS_EXTRA);
-      if (dnsResolverAddress == null || dnsResolverAddress.isEmpty()) {
-        Log.e(LOG_TAG, "Failed to receive DNS resolver address");
-        return;
-      }
-      Log.d(LOG_TAG, "DNS resolver address: " + dnsResolverAddress);
-      // Callback into tunnel manager to start tunneling.
-      m_tunnelManager.startTunnel(dnsResolverAddress);
-    }
-  };
 }
