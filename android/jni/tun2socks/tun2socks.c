@@ -49,6 +49,7 @@
 #include <misc/ipv6_proto.h>
 #include <misc/udp_proto.h>
 #include <misc/dns_proto.h>
+#include <misc/socks_proto.h>
 #include <misc/byteorder.h>
 #include <misc/balloc.h>
 #include <misc/open_standard_streams.h>
@@ -128,7 +129,8 @@ struct {
     int set_signal;
     // ==== PSIPHON ====
     // ==== UPROXY ====
-    char *dns_server_address;
+    char *dns_resolver_address;
+    char *udp_relay_address;
     // ==== UPROXY ====
 } options;
 
@@ -226,7 +228,8 @@ static void init_arguments (const char* program_name);
 // ==== PSIPHON ====
 
 //==== UPROXY ====
-BAddr dns_server_address;  // IP address of local DNS resolver
+BAddr dns_resolver_address;  // IP address of a DNS resolver
+BAddr udp_relay_address;   // IP address the UDP relay
 //==== UPROXY ====
 
 
@@ -294,8 +297,13 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
         return;
     }
 
+    struct socks_udp_header* header = (struct socks_udp_header*)udp_pcb->udp_recv_buffer;
+    size_t socks_udp_header_len = sizeof(struct socks_udp_header);
+    size_t udp_data_len = recv_bytes - socks_udp_header_len;
+    uint8_t* udp_data = udp_pcb->udp_recv_buffer + socks_udp_header_len;
+
     char dns_id_str[DNS_ID_STRLEN];
-    dns_get_header_id_str(dns_id_str, udp_pcb->udp_recv_buffer);
+    dns_get_header_id_str(dns_id_str, udp_data);
     const char* local_addr_str = BStringMap_Get(&udp_pcb->map, dns_id_str);
     if (!local_addr_str) {
         BLog(BLOG_ERROR, "udp_fd_handler: no address for DNS request id %s",
@@ -310,13 +318,13 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
         BStringMap_Unset(&udp_pcb->map, dns_id_str);
         return;
     }
+
     // Remove entry from map
     BStringMap_Unset(&udp_pcb->map, dns_id_str);
 
     // Send data to device
     udp_send_packet_to_device(
-        NULL, local_addr, udp_pcb->netif_addr,
-        udp_pcb->udp_recv_buffer, recv_bytes);
+        NULL, local_addr, dns_resolver_address, udp_data, udp_data_len);
 }
 
 // Initializes a UDP socket, binds it locally and connects it to a local
@@ -345,14 +353,17 @@ static int udp_init(UdpPcb* udp_pcb) {
         close(sockfd);
         return 0;
     }
+    char udp_relay_address_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&udp_relay_address, udp_relay_address_str);
+    BLog(BLOG_INFO, "UDP relay address: %s", udp_relay_address_str);
 
-    // Connect to UDP server on specified address
+    // 'Connect' to UDP server on specified address
     struct sockaddr_in remote_addr;
     memset(&remote_addr, 0, sizeof(remote_addr));
     remote_addr.sin_family = AF_INET;
     // BAddr is already in network order, use htonl/htons for ip/port otherwise
-    remote_addr.sin_addr.s_addr = dns_server_address.ipv4.ip;
-    remote_addr.sin_port = dns_server_address.ipv4.port;
+    remote_addr.sin_addr.s_addr = udp_relay_address.ipv4.ip;
+    remote_addr.sin_port = udp_relay_address.ipv4.port;
     if (connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) < 0) {
         BLog(BLOG_ERROR, "udp_init: failed to connect to remote");
         close(sockfd);
@@ -388,7 +399,7 @@ static int udp_send(int sockfd, uint8_t* data, int data_len) {
 
 static int udp_recv(int sockfd, uint8_t* buffer, int buffer_len) {
     int recv_bytes = recv(sockfd, buffer, buffer_len, 0);
-    BLog(BLOG_INFO, "udp_recv: received %d bytes", recv_bytes);
+    BLog(BLOG_DEBUG, "udp_recv: received %d bytes", recv_bytes);
     return recv_bytes;
 }
 
@@ -441,7 +452,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     jstring vpnIpAddress,
     jstring vpnNetMask,
     jstring socksServerAddress,
-    jstring dnsServerAddress,
+    jstring dnsResolverAddress,
     jint transparentDNS)
 {
     g_env = env;
@@ -449,14 +460,14 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     const char* vpnIpAddressStr = (*env)->GetStringUTFChars(env, vpnIpAddress, 0);
     const char* vpnNetMaskStr = (*env)->GetStringUTFChars(env, vpnNetMask, 0);
     const char* socksServerAddressStr = (*env)->GetStringUTFChars(env, socksServerAddress, 0);
-    const char* dnsServerAddressStr = (*env)->GetStringUTFChars(env, dnsServerAddress, 0);
+    const char* dnsResolverAddressStr = (*env)->GetStringUTFChars(env, dnsResolverAddress, 0);
 
     init_arguments("uProxy tun2socks");
 
     options.netif_ipaddr = (char*)vpnIpAddressStr;
     options.netif_netmask = (char*)vpnNetMaskStr;
     options.socks_server_addr = (char*)socksServerAddressStr;
-    options.dns_server_address = (char*)dnsServerAddressStr;
+    options.dns_resolver_address = (char*)dnsResolverAddressStr;
     options.transparent_dns = transparentDNS;
     options.tun_fd = vpnInterfaceFileDescriptor;
     options.tun_mtu = vpnInterfaceMTU;
@@ -472,7 +483,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     (*env)->ReleaseStringUTFChars(env, vpnIpAddress, vpnIpAddressStr);
     (*env)->ReleaseStringUTFChars(env, vpnNetMask, vpnNetMaskStr);
     (*env)->ReleaseStringUTFChars(env, socksServerAddress, socksServerAddressStr);
-    (*env)->ReleaseStringUTFChars(env, dnsServerAddress, dnsServerAddressStr);
+    (*env)->ReleaseStringUTFChars(env, dnsResolverAddress, dnsResolverAddressStr);
 
     g_env = 0;
 
@@ -850,7 +861,7 @@ void init_arguments (const char* program_name)
     options.udpgw_max_connections = DEFAULT_UDPGW_MAX_CONNECTIONS;
     options.udpgw_connection_buffer_size = DEFAULT_UDPGW_CONNECTION_BUFFER_SIZE;
     options.transparent_dns = 0;
-    options.dns_server_address = NULL;
+    options.dns_resolver_address = NULL;
 
     options.tun_fd = 0;
     options.set_signal = 1;
@@ -1153,10 +1164,23 @@ int process_arguments (void)
             return 0;
         }
     }
-    // resolve local DNS server address
-    if (options.dns_server_address) {
-        if (!BAddr_Parse2(&dns_server_address, options.dns_server_address, NULL, 0, 0)) {
-            BLog(BLOG_ERROR, "local dns server addr: BAddr_Parse2 failed");
+
+    if (options.transparent_dns) {
+        if (!options.dns_resolver_address) {
+            BLog(BLOG_ERROR,
+                 "transparentDNS requires a DNS resolver address");
+            return 0;
+        }
+        BLog(BLOG_INFO, "DNS resolver address: %s", options.dns_resolver_address);
+        // Resolve DNS server address
+        if (!BAddr_Parse2(&dns_resolver_address, options.dns_resolver_address, NULL, 0, 0)) {
+            BLog(BLOG_ERROR, "DNS resolver address: BAddr_Parse2 failed");
+            return 0;
+        }
+        // Resolve UDP relay address. Note that Shadowsocks sets up a UDP relay
+        // on the same address and port as its SOCKS server.
+        if (!BAddr_Parse2(&udp_relay_address, options.socks_server_addr, NULL, 0, 0)) {
+            BLog(BLOG_ERROR, "UDP relay address: BAddr_Parse2 failed");
             return 0;
         }
     }
@@ -1366,7 +1390,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
 {
     ASSERT(data_len >= 0)
     // do nothing if we don't have udpgw or dns resolver
-    if (!options.udpgw_remote_server_addr && !options.dns_server_address) {
+    if (!options.udpgw_remote_server_addr && !options.dns_resolver_address) {
         goto fail;
     }
 
@@ -1407,17 +1431,16 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             if (checksum_in_packet != checksum_computed) {
                 goto fail;
             }
-
-            BLog(BLOG_INFO, "UDP: from device %d bytes", data_len);
+            BLog(BLOG_DEBUG, "UDP: from device %d bytes", data_len);
 
             // construct addresses
             BAddr_InitIPv4(&local_addr, ipv4_header.source_address, udp_header.source_port);
             BAddr_InitIPv4(&remote_addr, ipv4_header.destination_address, udp_header.dest_port);
 
-            // if transparent DNS is enabled, any packet arriving at out netif
-            // address to port 53 is considered a DNS packet
+            // if transparent DNS is enabled, any packet to the DNS resolver on
+            // port 53 is considered a DNS packet
             is_dns = (options.transparent_dns &&
-                      ipv4_header.destination_address == netif_ipaddr.ipv4 &&
+                      remote_addr.ipv4.ip == dns_resolver_address.ipv4.ip &&
                       udp_header.dest_port == hton16(UDP_DNS_PORT));
         } break;
 
@@ -1477,14 +1500,27 @@ int process_device_udp_packet (uint8_t *data, int data_len)
     BAddr_Print(&local_addr, local_addr_str);
     char remote_addr_str[BADDR_MAX_PRINT_LEN];
     BAddr_Print(&remote_addr, remote_addr_str);
-    BLog(BLOG_INFO, "UDP: %s -> %s. DNS: %d", local_addr_str, remote_addr_str, is_dns);
+    BLog(BLOG_DEBUG, "UDP: %s -> %s. DNS: %d", local_addr_str, remote_addr_str, is_dns);
 
-    if (options.dns_server_address && is_dns) {
-        int sent_bytes = udp_send(udp_pcb.sockfd, data, data_len);
+    if (options.transparent_dns && is_dns) {
+        // Wrap the payload in a UDP SOCKS header.
+        static size_t socks_udp_header_len = sizeof(struct socks_udp_header);
+        struct socks_udp_header header;
+        memset(&header, 0, socks_udp_header_len);
+        header.atyp = SOCKS_ATYP_IPV4;
+        header.address.addr = remote_addr.ipv4.ip;
+        header.address.port = remote_addr.ipv4.port;
+
+        size_t socks_udp_request_len = socks_udp_header_len + data_len;
+        char socks_udp_request[socks_udp_request_len];
+        memcpy(socks_udp_request, &header, socks_udp_header_len);
+        memcpy(socks_udp_request + socks_udp_header_len, data, data_len);
+
+        int sent_bytes = udp_send(udp_pcb.sockfd, socks_udp_request, socks_udp_request_len);
         if (sent_bytes < data_len) {
             BLog(BLOG_ERROR, "udp_send: sent %d bytes, expected %d",
                  sent_bytes, data_len);
-            return 1;
+            goto fail;
         }
 
         char dns_id_str[DNS_ID_STRLEN];
@@ -1492,7 +1528,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
         if (!BStringMap_Set(&udp_pcb.map, dns_id_str, local_addr_str)) {
             BLog(BLOG_ERROR,
                  "failed to associate dns request id to local address");
-            return 1;
+            goto fail;
         }
     } else if (options.udpgw_remote_server_addr) {
         // submit packet to udpgw

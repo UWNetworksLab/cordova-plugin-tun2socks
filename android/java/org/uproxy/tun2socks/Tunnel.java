@@ -126,6 +126,8 @@ public class Tunnel {
 
   private static final String VPN_INTERFACE_NETMASK = "255.255.255.0";
   private static final int VPN_INTERFACE_MTU = 1500;
+  private static final String DNS_RESOLVER_IP = "8.8.8.8";
+  private static final int DNS_RESOLVER_PORT = 53;
 
   // Note: Atomic variables used for getting/setting local proxy port, routing flag, and
   // tun fd, as these functions may be called via callbacks. Do not use
@@ -152,7 +154,7 @@ public class Tunnel {
                 .setMtu(VPN_INTERFACE_MTU)
                 .addAddress(mPrivateAddress.mIpAddress, mPrivateAddress.mPrefixLength)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(mPrivateAddress.mRouter)
+                .addDnsServer(DNS_RESOLVER_IP)
                 .addDisallowedApplication(mHostService.getContext().getPackageName())
                 .establish();
       } catch (NameNotFoundException e) {
@@ -198,7 +200,7 @@ public class Tunnel {
         mPrivateAddress.mRouter,
         VPN_INTERFACE_NETMASK,
         socksServerAddress,
-        dnsServerAddress,
+        String.format("%s:%d", DNS_RESOLVER_IP, DNS_RESOLVER_PORT),
         true /* transparent DNS */);
 
     mHostService.onTunnelConnected();
