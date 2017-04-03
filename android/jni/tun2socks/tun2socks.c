@@ -272,12 +272,12 @@ static void udp_send_packet_to_device (void *unused, BAddr local_addr, BAddr rem
 
 //==== UPROXY ====
 
+// UDP process control block, used for UDP communications housekeeping.
 typedef struct {
-    int sockfd;
-    uint8_t *udp_recv_buffer;
-    BAddr netif_addr;
-    BFileDescriptor bfd;
-    BStringMap map;
+    int sockfd;  // UDP socket file descriptor
+    uint8_t *buffer;  // Data buffer
+    BFileDescriptor bfd;  // File descriptor object for BReactor
+    BStringMap map;  // Maps DNS id request to source IP address
 } UdpPcb;
 
 UdpPcb udp_pcb;
@@ -290,17 +290,20 @@ static void udp_free(UdpPcb* udp_pcb);
 
 // File descriptor handler for UDP socket.
 static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
-    int recv_bytes = udp_recv(udp_pcb->sockfd, udp_pcb->udp_recv_buffer,
-                              UDP_MAX_DATAGRAM_BYTES);
-    if (recv_bytes <= 0) {
-        BLog(BLOG_ERROR, "udp_fd_handler: udp_recv failed, err %d", recv_bytes);
+    size_t socks_udp_header_len = sizeof(struct socks_udp_header);
+    int datagram_len = udp_recv(udp_pcb->sockfd, udp_pcb->buffer,
+                                UDP_MAX_DATAGRAM_BYTES);
+    if (datagram_len <= 0) {
+        BLog(BLOG_ERROR, "udp_fd_handler: udp_recv failed, err %d", datagram_len);
+        return;
+    } else if (datagram_len <= socks_udp_header_len) {
+        BLog(BLOG_ERROR,
+             "udp_fd_handler: received less bytes than the length of the UDP SOCKS header");
         return;
     }
-
-    struct socks_udp_header* header = (struct socks_udp_header*)udp_pcb->udp_recv_buffer;
-    size_t socks_udp_header_len = sizeof(struct socks_udp_header);
-    size_t udp_data_len = recv_bytes - socks_udp_header_len;
-    uint8_t* udp_data = udp_pcb->udp_recv_buffer + socks_udp_header_len;
+    struct socks_udp_header* header = (struct socks_udp_header*)udp_pcb->buffer;
+    size_t udp_data_len = datagram_len - socks_udp_header_len;
+    uint8_t* udp_data = udp_pcb->buffer + socks_udp_header_len;
 
     char dns_id_str[DNS_ID_STRLEN];
     dns_get_header_id_str(dns_id_str, udp_data);
@@ -331,8 +334,8 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
 // address. Returns the socket file descriptor on success, and 0 otherwise.
 static int udp_init(UdpPcb* udp_pcb) {
     // Init receive buffer
-    udp_pcb->udp_recv_buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
-    if (!udp_pcb->udp_recv_buffer) {
+    udp_pcb->buffer = (uint8_t *)malloc(UDP_MAX_DATAGRAM_BYTES);
+    if (!udp_pcb->buffer) {
         BLog(BLOG_ERROR, "udp_init: failed to init recv buffer");
         return 0;
     }
@@ -380,8 +383,6 @@ static int udp_init(UdpPcb* udp_pcb) {
     BReactor_SetFileDescriptorEvents(&ss, &udp_pcb->bfd, BREACTOR_READ);
 
     udp_pcb->sockfd = sockfd;
-    udp_pcb->netif_addr =
-        BAddr_MakeFromIpaddrAndPort(netif_ipaddr, hton16(UDP_DNS_PORT));
     BStringMap_Init(&udp_pcb->map);
 
     return sockfd;
@@ -404,8 +405,8 @@ static int udp_recv(int sockfd, uint8_t* buffer, int buffer_len) {
 }
 
 static void udp_free(UdpPcb* udp_pcb) {
-    if (udp_pcb->udp_recv_buffer)
-        free(udp_pcb->udp_recv_buffer);
+    if (udp_pcb->buffer)
+        free(udp_pcb->buffer);
     if (udp_pcb->sockfd)
         close(udp_pcb->sockfd);
 
@@ -1671,7 +1672,7 @@ err_t listener_accept_func (void *arg, struct tcp_pcb *newpcb, err_t err)
     BAddr_Print(&client->local_addr, local_addr_str);
     char remote_addr_str[BADDR_MAX_PRINT_LEN];
     BAddr_Print(&client->remote_addr, remote_addr_str);
-    BLog(BLOG_NOTICE, "TCP: %s -> %s", local_addr_str, remote_addr_str);
+    BLog(BLOG_INFO, "TCP: %s -> %s", local_addr_str, remote_addr_str);
 
     // get destination address
     BAddr addr = client->local_addr;
