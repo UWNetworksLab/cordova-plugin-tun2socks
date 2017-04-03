@@ -57,10 +57,10 @@
     </config-file>
 
     <source-file src="ios/src/Tun2Socks.swift" />
+    <resource-file src="ios/vpn" />
     <framework src="ios/lib/CocoaAsyncSocket.framework" custom="true" />
     <framework src="ios/lib/PacketProcessor.framework" custom="true" />
     <framework src="ios/lib/ShadowPath.framework" custom="true" />
-
 
     <dependency id="cordova-plugin-add-swift-support" version="1.6.1"/>
   </platform>
