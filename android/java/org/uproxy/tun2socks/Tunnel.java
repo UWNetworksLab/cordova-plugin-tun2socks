@@ -103,9 +103,9 @@ public class Tunnel {
   }
 
   // Starts tun2socks. Returns true on success.
-  public synchronized boolean startTunneling(String socksServerAddress, String dnsServerAddress)
+  public synchronized boolean startTunneling(String socksServerAddress)
       throws Exception {
-    return routeThroughTunnel(socksServerAddress, dnsServerAddress);
+    return routeThroughTunnel(socksServerAddress);
   }
 
   // Stops routing traffic through the tunnel by stopping tun2socks.
@@ -126,6 +126,8 @@ public class Tunnel {
 
   private static final String VPN_INTERFACE_NETMASK = "255.255.255.0";
   private static final int VPN_INTERFACE_MTU = 1500;
+  private static final String DNS_RESOLVER_IP = "8.8.8.8";
+  private static final int DNS_RESOLVER_PORT = 53;
 
   // Note: Atomic variables used for getting/setting local proxy port, routing flag, and
   // tun fd, as these functions may be called via callbacks. Do not use
@@ -152,7 +154,7 @@ public class Tunnel {
                 .setMtu(VPN_INTERFACE_MTU)
                 .addAddress(mPrivateAddress.mIpAddress, mPrivateAddress.mPrefixLength)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(mPrivateAddress.mRouter)
+                .addDnsServer(DNS_RESOLVER_IP)
                 .addDisallowedApplication(mHostService.getContext().getPackageName())
                 .establish();
       } catch (NameNotFoundException e) {
@@ -183,7 +185,7 @@ public class Tunnel {
     return true;
   }
 
-  private boolean routeThroughTunnel(String socksServerAddress, String dnsServerAddress) {
+  private boolean routeThroughTunnel(String socksServerAddress) {
     if (!mRoutingThroughTunnel.compareAndSet(false, true)) {
       return false;
     }
@@ -198,7 +200,8 @@ public class Tunnel {
         mPrivateAddress.mRouter,
         VPN_INTERFACE_NETMASK,
         socksServerAddress,
-        dnsServerAddress,
+        socksServerAddress,  // The UDP relay has the same address and port as the SOCKS server.
+        String.format("%s:%d", DNS_RESOLVER_IP, DNS_RESOLVER_PORT),
         true /* transparent DNS */);
 
     mHostService.onTunnelConnected();
@@ -243,7 +246,8 @@ public class Tunnel {
       final String vpnIpAddress,
       final String vpnNetMask,
       final String socksServerAddress,
-      final String dnsServerAddress,
+      final String udpRelayAddress,
+      final String dnsResolverAddress,
       final boolean transparentDns) {
     if (mTun2SocksThread != null) {
       return;
@@ -259,7 +263,8 @@ public class Tunnel {
                     vpnIpAddress,
                     vpnNetMask,
                     socksServerAddress,
-                    dnsServerAddress,
+                    udpRelayAddress,
+                    dnsResolverAddress,
                     transparentDns ? 1 : 0);
               }
             });
