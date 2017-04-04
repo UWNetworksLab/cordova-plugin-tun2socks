@@ -1184,8 +1184,7 @@ int process_arguments (void)
             BLog(BLOG_ERROR, "DNS resolver address: BAddr_Parse2 failed");
             return 0;
         }
-        // Resolve UDP relay address. Note that Shadowsocks sets up a UDP relay
-        // on the same address and port as its SOCKS server.
+        // Resolve UDP relay address.
         if (!BAddr_Parse2(&udp_relay_addr, options.udp_relay_addr, NULL, 0, 0)) {
             BLog(BLOG_ERROR, "UDP relay address: BAddr_Parse2 failed");
             return 0;
