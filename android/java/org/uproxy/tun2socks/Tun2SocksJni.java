@@ -29,6 +29,7 @@ public class Tun2SocksJni {
       String vpnIpAddress,
       String vpnNetMask,
       String socksServerAddress,
+      String udpRelayAddress,
       String dnsResolverAddress,
       int transparentDNS);
 

@@ -129,8 +129,8 @@ struct {
     int set_signal;
     // ==== PSIPHON ====
     // ==== UPROXY ====
-    char *dns_resolver_address;
-    char *udp_relay_address;
+    char *dns_resolver_addr;
+    char *udp_relay_addr;
     // ==== UPROXY ====
 } options;
 
@@ -228,10 +228,12 @@ static void init_arguments (const char* program_name);
 // ==== PSIPHON ====
 
 //==== UPROXY ====
-BAddr dns_resolver_address;  // IP address of a DNS resolver
-BAddr udp_relay_address;   // IP address the UDP relay
+// IP address of the DNS server to which all DNS requests will be forwarded
+BAddr dns_resolver_addr;
+// IP address the UDP relay to which all SOCKS UDP requests will be sent
+// NOTE: this implementation does not make UDP ASSOCIATE requests and only supports DNS/UDP.
+BAddr udp_relay_addr;
 //==== UPROXY ====
-
 
 static void terminate (void);
 static void print_help (const char *name);
@@ -327,7 +329,7 @@ static void udp_fd_handler(UdpPcb* udp_pcb, int event) {
 
     // Send data to device
     udp_send_packet_to_device(
-        NULL, local_addr, dns_resolver_address, udp_data, udp_data_len);
+        NULL, local_addr, dns_resolver_addr, udp_data, udp_data_len);
 }
 
 // Initializes a UDP socket, binds it locally and connects it to a local
@@ -356,17 +358,17 @@ static int udp_init(UdpPcb* udp_pcb) {
         close(sockfd);
         return 0;
     }
-    char udp_relay_address_str[BADDR_MAX_PRINT_LEN];
-    BAddr_Print(&udp_relay_address, udp_relay_address_str);
-    BLog(BLOG_INFO, "UDP relay address: %s", udp_relay_address_str);
+    char udp_relay_addr_str[BADDR_MAX_PRINT_LEN];
+    BAddr_Print(&udp_relay_addr, udp_relay_addr_str);
+    BLog(BLOG_INFO, "UDP relay address: %s", udp_relay_addr_str);
 
     // 'Connect' to UDP server on specified address
     struct sockaddr_in remote_addr;
     memset(&remote_addr, 0, sizeof(remote_addr));
     remote_addr.sin_family = AF_INET;
     // BAddr is already in network order, use htonl/htons for ip/port otherwise
-    remote_addr.sin_addr.s_addr = udp_relay_address.ipv4.ip;
-    remote_addr.sin_port = udp_relay_address.ipv4.port;
+    remote_addr.sin_addr.s_addr = udp_relay_addr.ipv4.ip;
+    remote_addr.sin_port = udp_relay_addr.ipv4.port;
     if (connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) < 0) {
         BLog(BLOG_ERROR, "udp_init: failed to connect to remote");
         close(sockfd);
@@ -453,6 +455,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     jstring vpnIpAddress,
     jstring vpnNetMask,
     jstring socksServerAddress,
+    jstring udpRelayAddress,
     jstring dnsResolverAddress,
     jint transparentDNS)
 {
@@ -461,6 +464,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     const char* vpnIpAddressStr = (*env)->GetStringUTFChars(env, vpnIpAddress, 0);
     const char* vpnNetMaskStr = (*env)->GetStringUTFChars(env, vpnNetMask, 0);
     const char* socksServerAddressStr = (*env)->GetStringUTFChars(env, socksServerAddress, 0);
+    const char* udpRelayAddressStr = (*env)->GetStringUTFChars(env, udpRelayAddress, 0);
     const char* dnsResolverAddressStr = (*env)->GetStringUTFChars(env, dnsResolverAddress, 0);
 
     init_arguments("uProxy tun2socks");
@@ -468,7 +472,8 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     options.netif_ipaddr = (char*)vpnIpAddressStr;
     options.netif_netmask = (char*)vpnNetMaskStr;
     options.socks_server_addr = (char*)socksServerAddressStr;
-    options.dns_resolver_address = (char*)dnsResolverAddressStr;
+    options.udp_relay_addr = (char*)udpRelayAddressStr;
+    options.dns_resolver_addr = (char*)dnsResolverAddressStr;
     options.transparent_dns = transparentDNS;
     options.tun_fd = vpnInterfaceFileDescriptor;
     options.tun_mtu = vpnInterfaceMTU;
@@ -484,6 +489,7 @@ JNIEXPORT jint JNICALL Java_org_uproxy_tun2socks_Tun2SocksJni_runTun2Socks(
     (*env)->ReleaseStringUTFChars(env, vpnIpAddress, vpnIpAddressStr);
     (*env)->ReleaseStringUTFChars(env, vpnNetMask, vpnNetMaskStr);
     (*env)->ReleaseStringUTFChars(env, socksServerAddress, socksServerAddressStr);
+    (*env)->ReleaseStringUTFChars(env, udpRelayAddress, udpRelayAddressStr);
     (*env)->ReleaseStringUTFChars(env, dnsResolverAddress, dnsResolverAddressStr);
 
     g_env = 0;
@@ -862,7 +868,7 @@ void init_arguments (const char* program_name)
     options.udpgw_max_connections = DEFAULT_UDPGW_MAX_CONNECTIONS;
     options.udpgw_connection_buffer_size = DEFAULT_UDPGW_CONNECTION_BUFFER_SIZE;
     options.transparent_dns = 0;
-    options.dns_resolver_address = NULL;
+    options.dns_resolver_addr = NULL;
 
     options.tun_fd = 0;
     options.set_signal = 1;
@@ -1167,20 +1173,20 @@ int process_arguments (void)
     }
 
     if (options.transparent_dns) {
-        if (!options.dns_resolver_address) {
+        if (!options.dns_resolver_addr || !options.udp_relay_addr) {
             BLog(BLOG_ERROR,
-                 "transparentDNS requires a DNS resolver address");
+                 "transparentDNS requires a DNS resolver address and a UDP relay address");
             return 0;
         }
-        BLog(BLOG_INFO, "DNS resolver address: %s", options.dns_resolver_address);
+        BLog(BLOG_INFO, "DNS resolver address: %s", options.dns_resolver_addr);
         // Resolve DNS server address
-        if (!BAddr_Parse2(&dns_resolver_address, options.dns_resolver_address, NULL, 0, 0)) {
+        if (!BAddr_Parse2(&dns_resolver_addr, options.dns_resolver_addr, NULL, 0, 0)) {
             BLog(BLOG_ERROR, "DNS resolver address: BAddr_Parse2 failed");
             return 0;
         }
         // Resolve UDP relay address. Note that Shadowsocks sets up a UDP relay
         // on the same address and port as its SOCKS server.
-        if (!BAddr_Parse2(&udp_relay_address, options.socks_server_addr, NULL, 0, 0)) {
+        if (!BAddr_Parse2(&udp_relay_addr, options.udp_relay_addr, NULL, 0, 0)) {
             BLog(BLOG_ERROR, "UDP relay address: BAddr_Parse2 failed");
             return 0;
         }
@@ -1391,7 +1397,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
 {
     ASSERT(data_len >= 0)
     // do nothing if we don't have udpgw or dns resolver
-    if (!options.udpgw_remote_server_addr && !options.dns_resolver_address) {
+    if (!options.udpgw_remote_server_addr && !options.dns_resolver_addr) {
         goto fail;
     }
 
@@ -1441,7 +1447,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             // if transparent DNS is enabled, any packet to the DNS resolver on
             // port 53 is considered a DNS packet
             is_dns = (options.transparent_dns &&
-                      remote_addr.ipv4.ip == dns_resolver_address.ipv4.ip &&
+                      remote_addr.ipv4.ip == dns_resolver_addr.ipv4.ip &&
                       udp_header.dest_port == hton16(UDP_DNS_PORT));
         } break;
 

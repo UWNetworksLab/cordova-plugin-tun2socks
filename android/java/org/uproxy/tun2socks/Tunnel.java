@@ -200,6 +200,7 @@ public class Tunnel {
         mPrivateAddress.mRouter,
         VPN_INTERFACE_NETMASK,
         socksServerAddress,
+        socksServerAddress,  // The UDP relay has the same address and port as the SOCKS server.
         String.format("%s:%d", DNS_RESOLVER_IP, DNS_RESOLVER_PORT),
         true /* transparent DNS */);
 
@@ -245,6 +246,7 @@ public class Tunnel {
       final String vpnIpAddress,
       final String vpnNetMask,
       final String socksServerAddress,
+      final String udpRelayAddress,
       final String dnsResolverAddress,
       final boolean transparentDns) {
     if (mTun2SocksThread != null) {
@@ -261,6 +263,7 @@ public class Tunnel {
                     vpnIpAddress,
                     vpnNetMask,
                     socksServerAddress,
+                    udpRelayAddress,
                     dnsResolverAddress,
                     transparentDns ? 1 : 0);
               }
