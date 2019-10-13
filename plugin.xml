@@ -43,6 +43,10 @@
       src="android/libs/armeabi-v7a/libtun2socks.so"
       target-dir="libs/armeabi-v7a" />
 
+    <source-file
+      src="android/libs/arm64-v8a/libtun2socks.so"
+      target-dir="libs/arm64-v8a" />
+
 		<framework src="android/java/build-extras.gradle" custom="true" type="gradleReference" />
   </platform>
 </plugin>
