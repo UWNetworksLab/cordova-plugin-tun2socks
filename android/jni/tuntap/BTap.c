@@ -269,9 +269,9 @@ int BTap_Init2 (BTap *o, BReactor *reactor, struct BTap_init_data init_data, BTa
     
     // get MTU
     
-    ULONG umtu;
-    
-    if (!DeviceIoControl(o->device, TAP_IOCTL_GET_MTU, NULL, 0, &umtu, sizeof(umtu), &len, NULL)) {
+    ULONG umtu = 0;
+
+    if (!DeviceIoControl(o->device, TAP_IOCTL_GET_MTU, &umtu, sizeof(umtu), &umtu, sizeof(umtu), &len, NULL)) {
         BLog(BLOG_ERROR, "DeviceIoControl(TAP_IOCTL_GET_MTU) failed");
         goto fail2;
     }
@@ -477,21 +477,16 @@ int BTap_InitWithFD (BTap *o, BReactor *reactor, int fd, int mtu, BTap_handler_e
 {
     ASSERT(tun == 0 || tun == 1)
 
-    #ifndef BADVPN_LINUX
-
-    return 0;
-
-    #endif
-
+    #ifdef BADVPN_LINUX
     o->reactor = reactor;
     o->handler_error = handler_error;
     o->handler_error_user = handler_error_user;
     o->frame_mtu = mtu;
     o->fd = fd;
-    // ===== UPROXY =====
+    // ===== OUTLINE =====
     // Do not take ownership or close the TUN file descriptor
     o->close_fd = 0;
-    // ===== /UPROXY =====
+    // ===== /OUTLINE =====
 
     // TODO: use BTap_Init2? Still some different behavior (we don't want the fcntl block; we do want close to be called)
 
@@ -524,6 +519,8 @@ success:
     DebugError_Init(&o->d_err, BReactor_PendingGroup(o->reactor));
     DebugObject_Init(&o->d_obj);
     return 1;
+#endif
+    return 0;
 }
 
 // ==== PSIPHON ====

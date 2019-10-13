@@ -143,3 +143,4 @@
 {"BThreadSignal", 4},
 {"BLockReactor", 4},
 {"ncd_load_module", 4},
+{"SocksUdpClient", 4},

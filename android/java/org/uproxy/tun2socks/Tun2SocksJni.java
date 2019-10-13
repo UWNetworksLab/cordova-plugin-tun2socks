@@ -28,10 +28,12 @@ public class Tun2SocksJni {
       int vpnInterfaceMTU,
       String vpnIpAddress,
       String vpnNetMask,
+      String vpnIpV6Address,
       String socksServerAddress,
       String udpRelayAddress,
       String dnsResolverAddress,
-      int transparentDNS);
+      int transparentDNS,
+      int socks5UDP);
 
   public static native int terminateTun2Socks();
 
