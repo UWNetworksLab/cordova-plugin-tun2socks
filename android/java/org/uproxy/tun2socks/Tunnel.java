@@ -125,6 +125,7 @@ public class Tunnel {
   //----------------------------------------------------------------------------
 
   private static final String VPN_INTERFACE_NETMASK = "255.255.255.0";
+  private static final String VPN_IPV6_NULL = null;  // No IPv6 support.
   private static final int VPN_INTERFACE_MTU = 1500;
   private static final String DNS_RESOLVER_IP = "8.8.8.8";
   private static final int DNS_RESOLVER_PORT = 53;
@@ -199,10 +200,12 @@ public class Tunnel {
         VPN_INTERFACE_MTU,
         mPrivateAddress.mRouter,
         VPN_INTERFACE_NETMASK,
+        VPN_IPV6_NULL,
         socksServerAddress,
         socksServerAddress,  // The UDP relay has the same address and port as the SOCKS server.
         String.format("%s:%d", DNS_RESOLVER_IP, DNS_RESOLVER_PORT),
-        true /* transparent DNS */);
+        true /* transparent DNS */,
+        true /* socks5 UDP Enabled */);
 
     mHostService.onTunnelConnected();
     mHostService.onDiagnosticMessage("routing through tunnel");
@@ -245,10 +248,12 @@ public class Tunnel {
       final int vpnInterfaceMTU,
       final String vpnIpAddress,
       final String vpnNetMask,
+      final String vpnIpV6Address,
       final String socksServerAddress,
       final String udpRelayAddress,
       final String dnsResolverAddress,
-      final boolean transparentDns) {
+      final boolean transparentDns,
+      final boolean socks5UdpEnabled) {
     if (mTun2SocksThread != null) {
       return;
     }
@@ -262,10 +267,12 @@ public class Tunnel {
                     vpnInterfaceMTU,
                     vpnIpAddress,
                     vpnNetMask,
+                    vpnIpV6Address,
                     socksServerAddress,
                     udpRelayAddress,
                     dnsResolverAddress,
-                    transparentDns ? 1 : 0);
+                    transparentDns ? 1 : 0,
+                    socks5UdpEnabled ? 1 : 0);
               }
             });
     mTun2SocksThread.start();

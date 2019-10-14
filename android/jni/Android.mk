@@ -10,6 +10,13 @@ LOCAL_CFLAGS += -DBADVPN_USE_SELFPIPE -DBADVPN_USE_EPOLL
 LOCAL_CFLAGS += -DBADVPN_LITTLE_ENDIAN
 LOCAL_CFLAGS += -DPSIPHON
 
+ifeq ($(NDK_DEBUG),1)
+    LOCAL_CFLAGS += -g -O0 -fno-omit-frame-pointer
+    LOCAL_SANITIZE := address
+    LOCAL_MODULE_RELATIVE_PATH := asan
+    cmd-strip :=
+endif
+
 LOCAL_C_INCLUDES:= \
         $(LOCAL_PATH) \
         $(LOCAL_PATH)/lwip/src/include/ipv4 \
@@ -19,6 +26,7 @@ LOCAL_C_INCLUDES:= \
 
 LOCAL_SRC_FILES := \
         base/BLog_syslog.c \
+        system/BDatagram_unix.c \
         system/BReactor_badvpn.c \
         system/BSignal.c \
         system/BConnection_unix.c \
@@ -70,6 +78,7 @@ LOCAL_SRC_FILES := \
         flowextra/PacketPassInactivityMonitor.c \
         tun2socks/SocksUdpGwClient.c \
         udpgw_client/UdpGwClient.c \
+        socks_udp_client/SocksUdpClient.c \
         stringmap/BStringMap.c
 
 include $(BUILD_SHARED_LIBRARY)

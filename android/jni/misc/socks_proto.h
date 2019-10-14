@@ -120,7 +120,6 @@ struct socks_udp_header {
     uint16_t rsv;
     uint8_t frag;
     uint8_t atyp;
-    struct socks_addr_ipv4 address;
 } B_PACKED;
 B_END_PACKED
 
