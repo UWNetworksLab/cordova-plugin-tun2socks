@@ -37,12 +37,12 @@
 
     <source-file
       src="android/java/org/uproxy/tun2socks"
-      target-dir="src/org/uproxy/tun2socks" />
+      target-dir="java/org/uproxy/tun2socks" />
 
     <source-file
       src="android/libs/armeabi-v7a/libtun2socks.so"
       target-dir="libs/armeabi-v7a" />
 
-		<framework src="android/java/build-extras.gradle" custom="true" type="gradleReference" />
+    <framework src="android/java/build-extras.gradle" custom="true" type="gradleReference" />
   </platform>
 </plugin>
